@@ -1,0 +1,183 @@
+# AIChain Standalone Makefile
+
+.PHONY: build run clean test deps install dev format lint
+
+# Build configuration
+BINARY_NAME=aichain
+BUILD_DIR=bin
+MAIN_PACKAGE=./cmd/aichain-standalone
+
+# Version information
+VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
+COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+DATE ?= $(shell date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+# Build flags
+LDFLAGS=-ldflags "-X main.version=$(VERSION) -X main.commit=$(COMMIT) -X main.date=$(DATE)"
+
+# Default target
+all: build
+
+# Download dependencies
+deps:
+	@echo "📦 Downloading dependencies..."
+	go mod tidy
+	go mod download
+
+# Build the application
+build: deps
+	@echo "🔨 Building AIChain..."
+	mkdir -p $(BUILD_DIR)
+	go build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME) $(MAIN_PACKAGE)
+	@echo "✅ Build complete: $(BUILD_DIR)/$(BINARY_NAME)"
+
+# Build for multiple platforms
+build-all: deps
+	@echo "🔨 Building for multiple platforms..."
+	mkdir -p $(BUILD_DIR)
+	
+	# macOS (Intel)
+	GOOS=darwin GOARCH=amd64 go build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-darwin-amd64 $(MAIN_PACKAGE)
+	
+	# macOS (Apple Silicon)  
+	GOOS=darwin GOARCH=arm64 go build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-darwin-arm64 $(MAIN_PACKAGE)
+	
+	# Linux (Intel)
+	GOOS=linux GOARCH=amd64 go build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-linux-amd64 $(MAIN_PACKAGE)
+	
+	# Linux (ARM)
+	GOOS=linux GOARCH=arm64 go build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-linux-arm64 $(MAIN_PACKAGE)
+	
+	# Windows
+	GOOS=windows GOARCH=amd64 go build $(LDFLAGS) -o $(BUILD_DIR)/$(BINARY_NAME)-windows-amd64.exe $(MAIN_PACKAGE)
+	
+	@echo "✅ Multi-platform builds complete"
+
+# Run the application
+run: build
+	@echo "🚀 Running AIChain..."
+	$(BUILD_DIR)/$(BINARY_NAME)
+
+# Run in development mode
+dev:
+	@echo "🔧 Running in development mode..."
+	go run $(MAIN_PACKAGE)
+
+# Run with sample debate
+debate: build
+	@echo "🎭 Starting sample AI debate..."
+	$(BUILD_DIR)/$(BINARY_NAME) debate "Should AI development be regulated by government?"
+
+# Test the application
+test:
+	@echo "🧪 Running tests..."
+	go test -v ./...
+
+# Test with coverage
+test-coverage:
+	@echo "🧪 Running tests with coverage..."
+	go test -v -cover -coverprofile=coverage.out ./...
+	go tool cover -html=coverage.out -o coverage.html
+	@echo "📊 Coverage report: coverage.html"
+
+# Benchmark tests
+benchmark:
+	@echo "⚡ Running benchmarks..."
+	go test -bench=. ./...
+
+# Format code
+format:
+	@echo "🎨 Formatting code..."
+	go fmt ./...
+	goimports -w .
+
+# Lint code
+lint:
+	@echo "🔍 Linting code..."
+	golangci-lint run
+
+# Install the application
+install: build
+	@echo "📥 Installing AIChain..."
+	cp $(BUILD_DIR)/$(BINARY_NAME) /usr/local/bin/
+	@echo "✅ AIChain installed to /usr/local/bin/$(BINARY_NAME)"
+
+# Install development tools
+install-tools:
+	@echo "🛠️  Installing development tools..."
+	go install golang.org/x/tools/cmd/goimports@latest
+	go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+
+# Clean build artifacts
+clean:
+	@echo "🧹 Cleaning build artifacts..."
+	rm -rf $(BUILD_DIR)
+	rm -f coverage.out coverage.html
+	go clean
+
+# Generate documentation
+docs:
+	@echo "📚 Generating documentation..."
+	go doc -all ./... > docs/api.txt
+	@echo "✅ Documentation generated: docs/api.txt"
+
+# Create release archive
+release: build-all
+	@echo "📦 Creating release archives..."
+	mkdir -p release
+	
+	# Create tarballs for Unix systems
+	tar -czf release/$(BINARY_NAME)-$(VERSION)-darwin-amd64.tar.gz -C $(BUILD_DIR) $(BINARY_NAME)-darwin-amd64
+	tar -czf release/$(BINARY_NAME)-$(VERSION)-darwin-arm64.tar.gz -C $(BUILD_DIR) $(BINARY_NAME)-darwin-arm64
+	tar -czf release/$(BINARY_NAME)-$(VERSION)-linux-amd64.tar.gz -C $(BUILD_DIR) $(BINARY_NAME)-linux-amd64
+	tar -czf release/$(BINARY_NAME)-$(VERSION)-linux-arm64.tar.gz -C $(BUILD_DIR) $(BINARY_NAME)-linux-arm64
+	
+	# Create zip for Windows
+	cd $(BUILD_DIR) && zip ../release/$(BINARY_NAME)-$(VERSION)-windows-amd64.zip $(BINARY_NAME)-windows-amd64.exe
+	
+	@echo "✅ Release archives created in ./release/"
+
+# Setup development environment
+setup-dev: install-tools deps
+	@echo "🎯 Setting up development environment..."
+	@echo "✅ Development environment ready!"
+	@echo ""
+	@echo "Quick start:"
+	@echo "  make dev          # Run in development mode"
+	@echo "  make test         # Run tests"
+	@echo "  make build        # Build binary"
+	@echo "  make debate       # Start sample AI debate"
+
+# Show help
+help:
+	@echo "AIChain Standalone - Build Commands"
+	@echo ""
+	@echo "Building:"
+	@echo "  make build        Build the application"
+	@echo "  make build-all    Build for all platforms"
+	@echo "  make run          Build and run"
+	@echo "  make dev          Run in development mode"
+	@echo ""
+	@echo "Testing:"
+	@echo "  make test         Run tests"
+	@echo "  make test-coverage Run tests with coverage"
+	@echo "  make benchmark    Run benchmark tests"
+	@echo ""
+	@echo "Code Quality:"
+	@echo "  make format       Format code"
+	@echo "  make lint         Lint code"
+	@echo ""
+	@echo "Installation:"
+	@echo "  make install      Install binary to /usr/local/bin"
+	@echo "  make install-tools Install development tools"
+	@echo ""
+	@echo "Maintenance:"
+	@echo "  make clean        Clean build artifacts"
+	@echo "  make deps         Download dependencies"
+	@echo ""
+	@echo "Release:"
+	@echo "  make release      Create release archives"
+	@echo ""
+	@echo "Examples:"
+	@echo "  make debate       Start AI debate session"
+	@echo "  make setup-dev    Setup development environment"

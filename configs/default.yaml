@@ -1,0 +1,275 @@
+# ClaudeVIM Configuration File
+# This is the default configuration for ClaudeVIM standalone application
+
+# Application Settings
+app:
+  # Default AI model to use
+  default_model: "claude-opus-4-5-20251101"
+  
+  # Default AI provider
+  default_provider: "claude"
+  
+  # Auto-start backend when application starts
+  auto_start_backend: true
+  
+  # Working directory (empty = current directory)
+  working_directory: ""
+
+# UI Configuration
+ui:
+  # Color theme: "dark", "light", "auto"
+  theme: "dark"
+  
+  # Show line numbers in editor
+  show_line_numbers: true
+  
+  # Tab size for code editing
+  tab_size: 4
+  
+  # Word wrap in editor and chat
+  word_wrap: true
+  
+  # Default layout: "single", "dual", "triple"
+  default_layout: "triple"
+  
+  # Pane proportions for triple layout [explorer, editor, chat]
+  triple_proportions: [0.2, 0.5, 0.3]
+  
+  # Pane proportions for dual layout [left, right]
+  dual_proportions: [0.5, 0.5]
+
+# AI Provider Configurations
+providers:
+  claude:
+    # API key environment variable name
+    api_key_env: "CLAUDE_API_KEY"
+    
+    # Base URL for API calls
+    base_url: "https://api.anthropic.com/v1"
+    
+    # Available models
+    models:
+      - name: "claude-opus-4-5-20251101"
+        display_name: "Claude Opus 4"
+        max_tokens: 4096
+        context_size: 200000
+        strengths: ["coding", "analysis", "writing", "reasoning"]
+        
+      - name: "claude-sonnet-4-5-20251101"
+        display_name: "Claude Sonnet 4"
+        max_tokens: 4096
+        context_size: 200000
+        strengths: ["coding", "analysis", "balanced"]
+        
+      - name: "claude-3-5-haiku-20241022"
+        display_name: "Claude Haiku 3.5"
+        max_tokens: 4096
+        context_size: 200000
+        strengths: ["speed", "simple_tasks", "efficiency"]
+
+  # Future provider configurations can be added here
+  # openai:
+  #   api_key_env: "OPENAI_API_KEY"
+  #   base_url: "https://api.openai.com/v1"
+  #   models:
+  #     - name: "gpt-4"
+  #       display_name: "GPT-4"
+  #       max_tokens: 4096
+  #       context_size: 128000
+  #       strengths: ["reasoning", "code_review", "math"]
+
+# Session Templates
+session_templates:
+  # Code review workflow
+  code_review:
+    description: "Two-AI code review system"
+    sessions:
+      - name: "Developer"
+        model: "claude-opus-4-5-20251101"
+        role: "developer"
+        system_prompt: "You are a senior software developer focused on writing clean, efficient code. You write code and explain your reasoning."
+        
+      - name: "Reviewer"
+        model: "claude-sonnet-4-5-20251101"
+        role: "reviewer"
+        system_prompt: "You are a code reviewer focused on security, performance, and best practices. You provide constructive feedback."
+        
+    pipeline:
+      type: "dual"
+      bidirectional: false
+      auto_forward: true
+      
+    layout: "dual"
+    
+  # AI debate session
+  ai_debate:
+    description: "AI debate between different perspectives"
+    sessions:
+      - name: "Claude"
+        model: "claude-opus-4-5-20251101"
+        role: "participant"
+        system_prompt: "You enjoy intellectual debates and provide thoughtful arguments. Present your views clearly and engage constructively."
+        
+      - name: "GPT"
+        model: "claude-sonnet-4-5-20251101"  # Using Claude models for now
+        role: "participant"
+        system_prompt: "You enjoy intellectual debates and often play devil's advocate. Challenge ideas constructively and present alternative viewpoints."
+        
+    pipeline:
+      type: "debate"
+      bidirectional: true
+      
+    layout: "dual"
+    
+  # Architecture design workflow
+  architecture_design:
+    description: "Multi-AI architecture design system"
+    sessions:
+      - name: "Architect"
+        model: "claude-opus-4-5-20251101"
+        role: "architect"
+        system_prompt: "You are a system architect focused on high-level design, scalability, and architectural patterns."
+        
+      - name: "Database Expert"
+        model: "claude-sonnet-4-5-20251101"
+        role: "database"
+        system_prompt: "You are a database expert focused on data modeling, performance, and database design best practices."
+        
+      - name: "Security Expert"
+        model: "claude-3-5-haiku-20241022"
+        role: "security"
+        system_prompt: "You are a security expert focused on identifying vulnerabilities and ensuring secure design patterns."
+        
+    pipeline:
+      type: "chain"
+      flow: ["architect", "database", "security"]
+      
+    layout: "triple"
+
+# VIM Keybindings Configuration
+keybindings:
+  # Global keybindings (work in all modes/contexts)
+  global:
+    "ctrl+c": "quit"
+    "ctrl+q": "quit"
+    ":q": "quit"
+    ":quit": "quit"
+    
+  # Normal mode keybindings
+  normal:
+    # File explorer
+    "E": "toggle_explorer"
+    
+    # Navigation
+    "h": "focus_left"
+    "j": "focus_down"
+    "k": "focus_up"
+    "l": "focus_right"
+    "left": "focus_left"
+    "down": "focus_down"
+    "up": "focus_up"
+    "right": "focus_right"
+    
+    # Session management
+    "ctrl+t": "new_session"
+    "gt": "next_session"
+    "gT": "prev_session"
+    
+    # AI communication
+    "space": "send_line_to_ai"
+    
+    # Mode transitions
+    "i": "insert_mode"
+    "a": "insert_mode"
+    "o": "insert_mode"
+    "v": "visual_mode"
+    ":": "command_mode"
+    
+  # Visual mode keybindings
+  visual:
+    "enter": "send_selection_to_ai"
+    "ge": "explain_selection"
+    "gf": "fix_selection"
+    "go": "optimize_selection"
+    "gr": "review_selection"
+    "escape": "normal_mode"
+    
+  # Insert mode keybindings
+  insert:
+    "escape": "normal_mode"
+    "ctrl+[": "normal_mode"
+    
+  # Explorer mode keybindings
+  explorer:
+    "j": "cursor_down"
+    "k": "cursor_up"
+    "down": "cursor_down"
+    "up": "cursor_up"
+    "enter": "open_file"
+    "h": "go_up_directory"
+    "l": "enter_directory"
+    "left": "go_up_directory"
+    "right": "enter_directory"
+    "q": "close_explorer"
+    "escape": "normal_mode"
+    
+  # Chat mode keybindings
+  chat:
+    "i": "start_typing"
+    "a": "start_typing"
+    "o": "start_typing"
+    "j": "scroll_down"
+    "k": "scroll_up"
+    "down": "scroll_down"
+    "up": "scroll_up"
+    "escape": "normal_mode"
+
+# Command aliases
+commands:
+  # Session commands
+  "s": "session"
+  "sess": "session"
+  
+  # AI commands
+  "explain": "ai explain"
+  "fix": "ai fix"
+  "optimize": "ai optimize"
+  "review": "ai review"
+  
+  # Layout commands
+  "split": "layout dual"
+  "vsplit": "layout dual"
+  "three": "layout triple"
+  
+  # Pipeline commands
+  "debate": "pipeline debate"
+  "dual": "pipeline dual"
+  "chain": "pipeline chain"
+
+# Performance Settings
+performance:
+  # Maximum number of messages to keep in memory per session
+  max_messages_per_session: 1000
+  
+  # Maximum number of concurrent AI requests
+  max_concurrent_requests: 3
+  
+  # Request timeout in seconds
+  request_timeout: 60
+  
+  # Auto-save interval in seconds (0 = disabled)
+  auto_save_interval: 300
+
+# Logging Configuration
+logging:
+  # Log level: "debug", "info", "warn", "error"
+  level: "info"
+  
+  # Log file path (empty = stdout only)
+  file: ""
+  
+  # Include timestamps in logs
+  timestamps: true
+  
+  # Log AI requests/responses (for debugging)
+  log_ai_requests: false
