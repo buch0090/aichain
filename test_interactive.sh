@@ -1,6 +1,6 @@
 #!/bin/bash
 
-echo "=== ClaudeVIM Interactive Test ==="
+echo "=== AIChain Interactive Test ==="
 echo ""
 echo "Choose test method:"
 echo "1) Full test with dummy API key (TUI will start)"
@@ -11,23 +11,23 @@ read -p "Choice (1-3): " choice
 
 case $choice in
     1)
-        echo "Starting ClaudeVIM with dummy API key..."
+        echo "Starting AIChain with dummy API key..."
         echo "Press 'q' to quit when it starts"
         echo ""
         read -p "Press Enter to continue..."
-        CLAUDE_API_KEY=test ./claudevim-standalone
+        CLAUDE_API_KEY=test ./aichain-standalone
         ;;
     2)
         echo "Testing CLI commands..."
         echo ""
         echo "=== Help ==="
-        ./claudevim-standalone --help
+        ./aichain-standalone --help
         echo ""
         echo "=== Version ==="
-        ./claudevim-standalone version
+        ./aichain-standalone version
         echo ""
         echo "=== Config ==="
-        ./claudevim-standalone config --help
+        ./aichain-standalone config --help
         ;;
     3)
         echo "Cancelled."

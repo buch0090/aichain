@@ -1,22 +1,22 @@
-# ClaudeVIM Makefile
+# AIChain Makefile
 
 .PHONY: build install clean test run dev
 
 # Build the binary
 build:
-	go build -o bin/claudevim ./cmd/claudevim
+	go build -o bin/aichain ./cmd/aichain
 
 # Build for multiple platforms
 build-all:
-	GOOS=darwin GOARCH=amd64 go build -o bin/claudevim-darwin-amd64 ./cmd/claudevim
-	GOOS=darwin GOARCH=arm64 go build -o bin/claudevim-darwin-arm64 ./cmd/claudevim
-	GOOS=linux GOARCH=amd64 go build -o bin/claudevim-linux-amd64 ./cmd/claudevim
-	GOOS=windows GOARCH=amd64 go build -o bin/claudevim-windows-amd64.exe ./cmd/claudevim
+	GOOS=darwin GOARCH=amd64 go build -o bin/aichain-darwin-amd64 ./cmd/aichain
+	GOOS=darwin GOARCH=arm64 go build -o bin/aichain-darwin-arm64 ./cmd/aichain
+	GOOS=linux GOARCH=amd64 go build -o bin/aichain-linux-amd64 ./cmd/aichain
+	GOOS=windows GOARCH=amd64 go build -o bin/aichain-windows-amd64.exe ./cmd/aichain
 
 # Install locally for development
 install: build
-	cp bin/claudevim /usr/local/bin/claudevim
-	chmod +x /usr/local/bin/claudevim
+	cp bin/aichain /usr/local/bin/aichain
+	chmod +x /usr/local/bin/aichain
 
 # Clean build artifacts
 clean:
@@ -28,7 +28,7 @@ test:
 
 # Run the server for development
 run: build
-	./bin/claudevim --server --port 8747
+	./bin/aichain --server --port 8747
 
 # Development mode with auto-restart (requires air: go install github.com/cosmtrek/air@latest)
 dev:
@@ -50,7 +50,7 @@ lint:
 # Show help
 help:
 	@echo "Available commands:"
-	@echo "  build      - Build the claudevim binary"
+	@echo "  build      - Build the aichain binary"
 	@echo "  build-all  - Build for multiple platforms"
 	@echo "  install    - Install binary to /usr/local/bin"
 	@echo "  clean      - Clean build artifacts"

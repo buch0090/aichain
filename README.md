@@ -2,6 +2,20 @@
 
 A revolutionary VIM-like terminal application for AI agent chaining, featuring **multiple AI agents that can communicate with each other** in real-time.
 
+```
+    ┌─────┐      ┌─────┐      ┌─────┐      ┌─────┐
+    │ AI  │──────│ AI  │──────│ AI  │──────│ AI  │
+    │ 🤖  │ ⟸──⟹ │ 🧠  │ ⟸──⟹ │ ⚡  │ ⟸──⟹ │ 🎯  │
+    └─────┘      └─────┘      └─────┘      └─────┘
+        │            │            │            │
+        └────────────┼────────────┼────────────┘
+                     │            │
+               ┌─────▼────────────▼─────┐
+               │      AIChain 🚀       │
+               │   VIM + AI Agents     │
+               └───────────────────────┘
+```
+
 ## 🌟 Unique Features
 
 ### **AI-to-AI Communication** (Never Done Before!)
@@ -41,11 +55,11 @@ make -f Makefile-standalone dev
 
 ### First Launch
 ```bash
-# Start ClaudeVIM
-./bin/claudevim
+# Start AIChain
+./bin/aichain
 
 # Or start an AI debate immediately
-./bin/claudevim debate "Should AI development be regulated?"
+./bin/aichain debate "Should AI development be regulated?"
 ```
 
 ## 🎮 Basic Usage
@@ -88,7 +102,7 @@ make -f Makefile-standalone dev
 ### 2. AI Debate
 ```bash
 # Start a debate between two AI perspectives
-./bin/claudevim debate "Is functional programming better than OOP?"
+./bin/aichain debate "Is functional programming better than OOP?"
 
 # Watch the AIs build arguments and counter-arguments
 # You can jump in at any time with your own input
@@ -107,8 +121,8 @@ make -f Makefile-standalone dev
 
 ## 📁 Project Structure
 ```
-claudevim/
-├── cmd/claudevim-standalone/    # Main application
+aichain/
+├── cmd/aichain-standalone/    # Main application
 ├── internal/
 │   ├── app/                     # Core application logic
 │   ├── ai/                      # AI provider interfaces
@@ -133,10 +147,10 @@ claudevim/
 
 ## ⚙️ Configuration
 
-ClaudeVIM uses YAML configuration:
+AIChain uses YAML configuration:
 
 ```yaml
-# ~/.config/claudevim/config.yaml
+# ~/.config/aichain/config.yaml
 app:
   default_model: "claude-opus-4-5-20251101"
   default_provider: "claude"
@@ -218,4 +232,4 @@ MIT License - Feel free to build upon this innovative foundation!
 
 ---
 
-**ClaudeVIM Standalone**: Where VIM meets collaborative AI. The future of coding is here! 🌟
+**AIChain**: Where VIM meets collaborative AI. The future of coding is here! 🌟
