@@ -16,6 +16,34 @@ A revolutionary VIM-like terminal application for AI agent chaining, featuring *
                └───────────────────────┘
 ```
 
+## 🚧 **Project Status** 
+
+> **⚠️ Early Development - Core Features Working!**
+
+| Feature | Status | Notes |
+|---------|--------|-------|
+| 🤖 **AI Agent System** | ✅ **Working** | Claude integration with full filesystem tools (list_files, read_file, write_file) |
+| 🖥️ **VIM-like TUI** | ✅ **Working** | Chain setup, agent execution, scrollable panes, text selection enabled |
+| 🔗 **Agent Chaining** | ✅ **Foundation** | DSL parsing, agent configuration system in place |
+| 💬 **Single AI Sessions** | ✅ **Working** | Chat with Claude agents, specialized roles (architect, developer, etc.) |
+| ⚡ **Real-time Chat** | ✅ **Working** | Interactive AI conversations with working tool calls |
+| 🔄 **AI-to-AI Debates** | 🟡 **Partial** | Pipeline foundation exists, but limited to Claude-only debates |
+| 🌐 **Multi-Provider** | ❌ **Planned** | Currently Claude-only, GPT/other providers planned |
+| 📝 **File Operations** | ✅ **Working** | AI agents can read, write, and list files in allowed directories |
+
+### **What Works Right Now:**
+- ✅ Launch AIChain TUI with working agent chains
+- ✅ Chat with specialized AI agents (architect, developer, security, etc.)
+- ✅ AI agents can read/write files and explore directories
+- ✅ VIM-like keybindings and navigation
+- ✅ Agent chain setup via DSL (Domain Specific Language)
+
+### **Coming Soon:**
+- 🚀 True multi-provider AI debates (Claude vs GPT)
+- 🚀 Advanced pipeline workflows 
+- 🚀 More AI provider integrations
+- 🚀 Enhanced VIM modal editing
+
 ## 🌟 Unique Features
 
 ### **AI-to-AI Communication** (Never Done Before!)
@@ -225,6 +253,18 @@ make -f Makefile-standalone build-all  # Multi-platform builds
 ## 🤝 Contributing
 
 This is a prototype showcasing the innovative AI collaboration concept. The core architecture is complete and functional.
+
+## 🛠️ **Development & Contributing**
+
+> **Current State**: This is an active development project with a solid foundation
+
+**For Contributors:**
+- 🏗️ **Architecture**: Clean Go codebase with modular design  
+- 🧪 **Testing**: Basic framework in place, tests need expansion
+- 📋 **Next Priorities**: Multi-provider support, enhanced agent chaining, better pipeline visualization
+- 🎯 **Good First Issues**: Adding new AI providers, improving TUI components, writing tests
+
+**Want to contribute?** The project is at a great stage for contributors - core functionality works, but there's lots of room for enhancement!
 
 ## 📄 License
 
