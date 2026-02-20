@@ -1,6 +1,7 @@
-# AIChain 🚀
+# AIChain
 
-A revolutionary VIM-like terminal application for AI agent chaining, featuring **multiple AI agents that can communicate with each other** in real-time.
+A revolutionary VIM-like terminal application for AI agent chaining, featuring **multiple AI agents that
+-can communicate with each other** in real-time.
 
 ```
     ┌─────┐      ┌─────┐      ┌─────┐      ┌─────┐
@@ -16,260 +17,160 @@ A revolutionary VIM-like terminal application for AI agent chaining, featuring *
                └───────────────────────┘
 ```
 
-## 🚧 **Project Status** 
+## DSL Overview
 
-> **⚠️ Early Development - Core Features Working!**
+AIChain uses a topology DSL to define how agents communicate. You enter this in the interactive setup screen.
 
-| Feature | Status | Notes |
-|---------|--------|-------|
-| 🤖 **AI Agent System** | ✅ **Working** | Claude integration with full filesystem tools (list_files, read_file, write_file) |
-| 🖥️ **VIM-like TUI** | ✅ **Working** | Chain setup, agent execution, scrollable panes, text selection enabled |
-| 🔗 **Agent Chaining** | ✅ **Foundation** | DSL parsing, agent configuration system in place |
-| 💬 **Single AI Sessions** | ✅ **Working** | Chat with Claude agents, specialized roles (architect, developer, etc.) |
-| ⚡ **Real-time Chat** | ✅ **Working** | Interactive AI conversations with working tool calls |
-| 🔄 **AI-to-AI Debates** | 🟡 **Partial** | Pipeline foundation exists, but limited to Claude-only debates |
-| 🌐 **Multi-Provider** | ❌ **Planned** | Currently Claude-only, GPT/other providers planned |
-| 📝 **File Operations** | ✅ **Working** | AI agents can read, write, and list files in allowed directories |
+### Topology Syntax
 
-### **What Works Right Now:**
-- ✅ Launch AIChain TUI with working agent chains
-- ✅ Chat with specialized AI agents (architect, developer, security, etc.)
-- ✅ AI agents can read/write files and explore directories
-- ✅ VIM-like keybindings and navigation
-- ✅ Agent chain setup via DSL (Domain Specific Language)
+| Operator | Meaning |
+|----------|---------|
+| `A -> B` | A sends output to B (one-way) |
+| `A <- B` | A receives from B (one-way, reversed) |
+| `A <> B` | A and B communicate bidirectionally |
+| `*`      | Human node — a pane where you interact directly |
 
-### **Coming Soon:**
-- 🚀 True multi-provider AI debates (Claude vs GPT)
-- 🚀 Advanced pipeline workflows 
-- 🚀 More AI provider integrations
-- 🚀 Enhanced VIM modal editing
+These compose into chains:
 
-## 🌟 Unique Features
+```
+A -> B -> C          # linear pipeline
+A <> B <> C          # all neighbors communicate bidirectionally
+A -> * <- B          # human receives from both A and B
+A <> *               # human and A communicate bidirectionally
+```
 
-### **AI-to-AI Communication** (Never Done Before!)
-- **Multiple AI Agents**: Multiple AI models working together in chains
-- **AI Debate Mode**: Watch different AI models debate topics and build on each other's ideas
-- **Pipeline Workflows**: Chain multiple AI agents for complex problem-solving
-- **Real-time Collaboration**: AI agents can see and respond to each other's outputs
+Node identifiers can be any letters or numbers (`A`, `B`, `dev`, `review`, etc.).
 
-### **True VIM Experience**
-- Full VIM modal editing (Normal, Insert, Visual, Command modes)
-- VIM keybindings throughout the entire interface
-- No mouse required - pure keyboard workflow
-- Familiar VIM commands (`:q`, `gt`, `gT`, `v`, etc.)
+## Interactive Setup
 
-### **Professional Terminal Interface**
-- Three-pane layout: File Explorer | Editor | AI Chat
-- File explorer with VIM navigation (`j`/`k`, `h`/`l`)
-- Real-time chat with multiple AI sessions
-- Session templates for common workflows
+Run the setup screen:
 
-## 🔧 Quick Start
-
-### Prerequisites
 ```bash
-# Required: Claude API key
-export CLAUDE_API_KEY=your-claude-api-key-here
+./bin/aichain --setup
 ```
 
-### Installation
-```bash
-# Build from source
-make -f Makefile-standalone build
-
-# Or use development mode
-make -f Makefile-standalone dev
+**Step 1 — Enter topology:**
+```
+A -> B -> C
 ```
 
-### First Launch
-```bash
-# Start AIChain
-./bin/aichain
+**Step 2 — Assign an agent to each node.** For each node (`A`, `B`, `C`), you select from the pre-configured agents in your `.agents/` directory.
 
-# Or start an AI debate immediately
-./bin/aichain debate "Should AI development be regulated?"
-```
+## Agent Definitions
 
-## 🎮 Basic Usage
-
-### VIM Keybindings
-| Mode | Key | Action |
-|------|-----|--------|
-| Normal | `E` | Toggle file explorer |
-| Normal | `Ctrl+t` | New AI session |
-| Normal | `gt` / `gT` | Next/Previous session |
-| Normal | `h`/`j`/`k`/`l` | Navigate panes |
-| Normal | `i` | Enter insert mode |
-| Normal | `v` | Enter visual mode |
-| Normal | `:` | Command mode |
-| Visual | `Enter` | Send selection to AI |
-| Explorer | `j`/`k` | Navigate files |
-| Explorer | `Enter` | Open file |
-
-### Commands
-```vim
-:session new            # Create new AI session
-:dual                   # Create dual AI session
-:debate [topic]         # Start AI debate
-:q                      # Quit
-```
-
-## 🤖 AI Collaboration Examples
-
-### 1. Code Review Workflow
-```bash
-# Create two AI sessions - Developer and Reviewer
-:session new Developer
-:session new Reviewer
-:dual
-
-# Developer writes code, automatically sent to Reviewer
-# Reviewer provides feedback, sent back to Developer
-```
-
-### 2. AI Debate
-```bash
-# Start a debate between two AI perspectives
-./bin/aichain debate "Is functional programming better than OOP?"
-
-# Watch the AIs build arguments and counter-arguments
-# You can jump in at any time with your own input
-```
-
-### 3. Architecture Design Pipeline
-```bash
-# Chain AIs: Architect → Database Expert → Security Expert
-:session new Architect
-:session new Database
-:session new Security
-:pipeline chain Architect Database Security
-
-# Each AI builds on the previous one's output
-```
-
-## 📁 Project Structure
-```
-aichain/
-├── cmd/aichain-standalone/    # Main application
-├── internal/
-│   ├── app/                     # Core application logic
-│   ├── ai/                      # AI provider interfaces
-│   │   ├── provider.go          # Generic AI interface
-│   │   └── claude.go            # Claude implementation
-│   ├── pipeline/                # AI-to-AI communication
-│   │   └── pipeline.go          # Pipeline engine
-│   ├── session/                 # Session management
-│   │   └── session.go           # Multi-session handling
-│   ├── vim/                     # VIM keybinding engine
-│   │   └── keybindings.go       # Modal editing system
-│   ├── tui/                     # Terminal UI
-│   │   ├── model.go             # Main TUI model
-│   │   ├── panes.go             # Explorer, Editor, Chat panes
-│   │   └── messages.go          # Event system
-│   └── config/                  # Configuration system
-│       └── config.go            # YAML configuration
-├── configs/
-│   └── default.yaml             # Default configuration
-└── Makefile-standalone          # Build system
-```
-
-## ⚙️ Configuration
-
-AIChain uses YAML configuration:
+Agents are YAML files stored in `.agents/`:
 
 ```yaml
-# ~/.config/aichain/config.yaml
-app:
-  default_model: "claude-opus-4-5-20251101"
-  default_provider: "claude"
-
-ui:
-  theme: "dark"
-  default_layout: "triple"  # explorer | editor | chat
-  triple_proportions: [0.2, 0.5, 0.3]
-
-session_templates:
-  code_review:
-    sessions:
-      - name: "Developer"
-        model: "claude-opus-4-5-20251101"
-        role: "developer"
-      - name: "Reviewer" 
-        model: "claude-sonnet-4-5-20251101"
-        role: "reviewer"
-    pipeline:
-      type: "dual"
-      auto_forward: true
+# .agents/developer.yaml
+id: developer
+name: Software Developer
+description: Expert at writing, reviewing, and debugging code
+model: claude-3-5-sonnet-20241022
+role: developer
+temperature: 0.3
+system_prompt: |
+  You are an expert software developer with deep knowledge of multiple
+  programming languages and best practices.
+tags:
+  - coding
+  - development
 ```
 
-## 🛠️ Development
+On first run, AIChain creates default agents in `.agents/`: `developer`, `architect`, `reviewer`, `debugger`, `security`, `tester`. You can edit these or add your own.
 
-### Build Commands
+## Example Topologies
+
+### Linear code review pipeline
+```
+A -> B -> C
+```
+Assign: A = developer, B = reviewer, C = tester. Developer writes, reviewer critiques, tester validates.
+
+### Bidirectional collaboration
+```
+A <> B <> C
+```
+Assign: A = architect, B = developer, C = security. All three can exchange messages with their neighbors.
+
+### Fan-in to human
+```
+A -> * <- B
+```
+Both agents send output to a human pane for review and decision.
+
+### Human in the loop
+```
+A -> B -> *
+```
+Output flows through two agents before reaching you.
+
+## How It Works
+
+Each agent in the `flow` runs in its own goroutine and communicates via Go channels. The DSL topology determines which channels are wired together:
+
+- `A -> B`: A's output channel connects to B's input channel
+- `A <> B`: channels are connected in both directions
+- `*`: a human-controlled pane that sends/receives from connected agents
+
+Agents can use tools (file read/write, shell commands) during their turns.
+
+## Setup
+
 ```bash
-make -f Makefile-standalone build      # Build application
-make -f Makefile-standalone test       # Run tests  
-make -f Makefile-standalone dev        # Development mode
-make -f Makefile-standalone build-all  # Multi-platform builds
+export CLAUDE_API_KEY=your-api-key
+
+make -f Makefile-standalone build
+./bin/aichain --setup
 ```
 
-### Architecture Highlights
-- **Go + Bubble Tea**: Fast, lightweight TUI framework
-- **Concurrent AI Sessions**: Thread-safe session management
-- **Plugin Architecture**: Easy to add new AI providers
-- **Event-Driven**: Reactive UI updates
-- **VIM Engine**: Full modal editing implementation
+## Tools Available to Agents
 
-## 🎯 What Makes This Special
+| Tool | Description |
+|------|-------------|
+| `read_file(path)` | Read file contents |
+| `write_file(path, content)` | Write to a file |
+| `list_files(dir)` | List directory contents |
+| `run_command(cmd)` | Execute a shell command |
 
-### 1. **AI Collaboration** (Industry First)
-- No other tool enables multiple AI models to collaborate in real-time
-- Watch different AI personalities debate and build on each other's ideas
-- Create custom AI workflows and pipelines
+Tool calls are limited to 5 rounds per agent turn to prevent infinite loops.
 
-### 2. **True VIM Integration**
-- Not just VIM-inspired - actual VIM modal editing
-- Every feature accessible via keyboard
-- Familiar workflow for VIM experts
+## Project Structure
 
-### 3. **Terminal-Native**
-- No browser, no Electron - pure terminal performance
-- Lightweight and fast
-- Works over SSH, in tmux, anywhere terminals work
+```
+internal/
+├── chain/
+│   ├── dsl.go        # DSL parser — connection types, node extraction
+│   ├── agents.go     # ChainAgent struct, goroutine execution
+│   └── setup.go      # Chain initialization
+├── tui/
+│   ├── model.go      # Top-level Bubble Tea model
+│   ├── chain_setup.go         # Chain configuration UI
+│   └── chain_execution.go     # Running chain with agent panes
+├── ai/
+│   └── claude.go     # Claude API integration
+└── tools/
+    └── tools.go      # Tool implementations
+```
 
-### 4. **Professional Workflow**
-- File explorer + editor + AI chat in one interface
-- Session templates for repeatable workflows
-- Configurable layouts and keybindings
+## Keybindings
 
-## 🚀 Future Enhancements
+| Key | Action |
+|-----|--------|
+| `j` / `k` | Navigate up/down in focused pane |
+| `Tab` | Switch focus between agent panes |
+| `i` | Enter insert mode (type to agent) |
+| `Esc` | Return to normal mode |
+| `Enter` | Send message to focused agent |
+| `:q` | Quit |
 
-- [ ] **Multi-Provider Support**: OpenAI GPT, local models via Ollama
-- [ ] **Voice Integration**: Talk to your AI sessions
-- [ ] **Code Execution**: Run code directly from AI suggestions
-- [ ] **Team Collaboration**: Share AI sessions across team members
-- [ ] **Plugin System**: Custom AI workflows and integrations
-- [ ] **Git Integration**: AI-powered code reviews and commits
+## Build
 
-## 🤝 Contributing
+```bash
+make -f Makefile-standalone build      # build binary to ./bin/aichain
+make -f Makefile-standalone test       # run tests
+make -f Makefile-standalone dev        # build and run
+```
 
-This is a prototype showcasing the innovative AI collaboration concept. The core architecture is complete and functional.
+## License
 
-## 🛠️ **Development & Contributing**
-
-> **Current State**: This is an active development project with a solid foundation
-
-**For Contributors:**
-- 🏗️ **Architecture**: Clean Go codebase with modular design  
-- 🧪 **Testing**: Basic framework in place, tests need expansion
-- 📋 **Next Priorities**: Multi-provider support, enhanced agent chaining, better pipeline visualization
-- 🎯 **Good First Issues**: Adding new AI providers, improving TUI components, writing tests
-
-**Want to contribute?** The project is at a great stage for contributors - core functionality works, but there's lots of room for enhancement!
-
-## 📄 License
-
-MIT License - Feel free to build upon this innovative foundation!
-
----
-
-**AIChain**: Where VIM meets collaborative AI. The future of coding is here! 🌟
+MIT
