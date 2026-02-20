@@ -148,8 +148,21 @@ func (c *ClaudeProvider) SendMessage(ctx context.Context, prompt string, aiConte
 	// Tool calling loop - handle multiple rounds of tool use
 	allMessages := messages
 	var finalContent strings.Builder
+	maxToolRounds := 10  // Increased from 5 to 10
+	toolRounds := 0
+	
+	// Track repeated tool failures to break infinite loops
+	var lastToolCall string
+	var lastToolError string
+	consecutiveFailures := 0
 	
 	for {
+		toolRounds++
+		if toolRounds > maxToolRounds {
+			c.sdkLogger.Printf("Maximum tool calling rounds (%d) exceeded, breaking loop", maxToolRounds)
+			finalContent.WriteString("\n[Tool calling limit reached - response may be incomplete]")
+			break
+		}
 		// Make the API call
 		message, err := c.client.Messages.New(ctx, anthropic.MessageNewParams{
 			Model:       params.Model,
@@ -185,6 +198,31 @@ func (c *ClaudeProvider) SendMessage(ctx context.Context, prompt string, aiConte
 				toolResult, toolError := c.executeToolFunction(toolUseBlock.Name, toolUseBlock.Input, aiContext)
 				
 				c.sdkLogger.Printf("Tool execution result - Name: %s, Error: %v, Result: %q", toolUseBlock.Name, toolError, toolResult)
+				
+				// Track consecutive failures to break infinite loops  
+				inputBytes, _ := json.Marshal(toolUseBlock.Input)
+				currentToolCall := fmt.Sprintf("%s:%s", toolUseBlock.Name, string(inputBytes))
+				currentToolErrorStr := ""
+				if toolError != nil {
+					currentToolErrorStr = toolError.Error()
+				}
+				
+				if currentToolCall == lastToolCall && currentToolErrorStr == lastToolError && toolError != nil {
+					consecutiveFailures++
+					c.sdkLogger.Printf("Consecutive failure #%d for tool %s with same error: %s", consecutiveFailures, toolUseBlock.Name, toolError)
+					
+					if consecutiveFailures >= 3 {
+						c.sdkLogger.Printf("Breaking infinite loop - same tool call failed 3 times in a row")
+						finalContent.WriteString(fmt.Sprintf("\n[Stopped infinite loop: %s failed repeatedly with: %s]", toolUseBlock.Name, toolError))
+						hasTools = false // Force exit from tool calling loop
+						break
+					}
+				} else {
+					consecutiveFailures = 0 // Reset counter for different tool calls or successful calls
+				}
+				
+				lastToolCall = currentToolCall
+				lastToolError = currentToolErrorStr
 				
 				// Create tool result block
 				if toolError != nil {

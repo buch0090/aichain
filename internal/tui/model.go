@@ -2,10 +2,13 @@ package tui
 
 import (
 	"fmt"
+	"io/ioutil"
+	"log"
 	"strings"
 	"time"
 
 	"github.com/aichain/aichain/internal/app"
+	"github.com/aichain/aichain/internal/chain"
 	"github.com/aichain/aichain/internal/session"
 	"github.com/aichain/aichain/internal/vim"
 
@@ -134,6 +137,32 @@ func NewModel(application *app.Application) Model {
 		chat:         chat,
 		styles:       createStyles(),
 	}
+}
+
+// NewModelWithDSLFile creates a new TUI model and directly executes a DSL file
+func NewModelWithDSLFile(application *app.Application, dslFile string) Model {
+	// Create basic model
+	model := NewModel(application)
+	
+	// Read DSL file content
+	dslContent, err := ioutil.ReadFile(dslFile)
+	if err != nil {
+		log.Fatalf("Failed to read DSL file %s: %v", dslFile, err)
+	}
+	
+	// Parse DSL and create chain
+	parser := chain.NewDSLParser()
+	completedChain, err := parser.ParseChainDSL(string(dslContent))
+	if err != nil {
+		log.Fatalf("Failed to parse DSL file %s: %v", dslFile, err)
+	}
+	
+	// Create chain execution model directly
+	chainExecModel := NewChainExecutionModel(application, completedChain)
+	model.chainExecution = &chainExecModel
+	model.mode = ModeChainExecution
+	
+	return model
 }
 
 // Init initializes the model

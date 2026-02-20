@@ -1,10 +1,13 @@
 package tui
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"os"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/aichain/aichain/internal/ai"
 	"github.com/aichain/aichain/internal/app"
@@ -48,6 +51,14 @@ type ChainExecutionModel struct {
 	AgentPanes     []*AgentPane
 	activeAgent    int
 
+	// Channel-based agent communication
+	ChainAgents    map[string]*ChainAgent
+	agentCtx       context.Context
+	agentCancel    context.CancelFunc
+	
+	// UI message channel for agent responses
+	uiMsgChan      chan AgentResponseMsg
+
 	// UI State
 	styles         ChainExecutionStyles
 }
@@ -57,6 +68,9 @@ type AgentResponseMsg struct {
 	AgentIndex int
 	Message    AgentMessage
 }
+
+// RefreshUIMsg is sent periodically to refresh the UI
+type RefreshUIMsg struct{}
 
 // AgentPane represents a pane for a single agent
 type AgentPane struct {
@@ -87,15 +101,40 @@ const (
 	AgentError
 )
 
+// ChainAgent represents an agent with channel communication capabilities
+type ChainAgent struct {
+	ID         string
+	Node       *chain.ChainNode
+	Pane       *AgentPane
+	AgentIndex int  // Index in AgentPanes slice for UI callbacks
+	
+	// Channels for inter-agent communication  
+	InChan     chan AgentMessage
+	OutChans   map[string]chan AgentMessage
+	
+	// Agent processing
+	aiManager  *ai.Manager
+	workingDir string
+	
+	// UI Communication - callback to send messages to TUI
+	UICallback func(tea.Msg) tea.Cmd
+	
+	// Control
+	ctx        context.Context
+	cancel     context.CancelFunc
+	mu         sync.RWMutex
+}
+
 // ChainExecutionStyles holds styling for chain execution UI
 type ChainExecutionStyles struct {
 	Title          lipgloss.Style
 	AgentPane      lipgloss.Style
 	ActivePane     lipgloss.Style
 	Message        lipgloss.Style
-	UserMessage    lipgloss.Style
-	AssistantMessage lipgloss.Style
-	SystemMessage  lipgloss.Style
+	UserMessage    lipgloss.Style          // Messages from human - bright green
+	AssistantMessage lipgloss.Style        // Agent's own responses - blue
+	SystemMessage  lipgloss.Style          // System messages - orange/red
+	InterAgentMessage lipgloss.Style       // Messages FROM other agents - purple
 	Input          lipgloss.Style
 	StatusIdle     lipgloss.Style
 	StatusThinking lipgloss.Style
@@ -145,6 +184,9 @@ func NewChainExecutionModel(app *app.Application, completedChain *chain.Chain) C
 		}
 	}
 
+	// Create agent context for managing goroutines
+	agentCtx, agentCancel := context.WithCancel(context.Background())
+
 	model := ChainExecutionModel{
 		app:          app,
 		chain:        completedChain,
@@ -155,10 +197,16 @@ func NewChainExecutionModel(app *app.Application, completedChain *chain.Chain) C
 		inputFocused: true,
 		AgentPanes:   agentPanes,
 		activeAgent:  0,
+		ChainAgents:  make(map[string]*ChainAgent),
+		agentCtx:     agentCtx,
+		agentCancel:  agentCancel,
 		styles:       createChainExecutionStyles(),
 		Width:        80,  // Default width
 		Height:       24,  // Default height
 	}
+	
+	// Setup channel-based agent communication
+	model.setupAgentChannels()
 	
 	return model
 }
@@ -172,6 +220,14 @@ func (m ChainExecutionModel) Update(msg tea.Msg) (ChainExecutionModel, tea.Cmd) 
 		m.Width = msg.Width
 		m.Height = msg.Height
 		m.updateLayout()
+
+	case RefreshUIMsg:
+		// Periodic UI refresh - update all pane content to reflect changes from goroutines
+		for _, pane := range m.AgentPanes {
+			m.updatePaneContent(pane)
+		}
+		// Schedule next refresh
+		cmd = m.scheduleRefresh()
 
 	case AgentResponseMsg:
 		// Handle agent responses from background processing
@@ -488,20 +544,23 @@ func (m *ChainExecutionModel) updatePaneContent(pane *AgentPane) {
 	var contentLines []string
 	for _, msg := range pane.Messages {
 		// Format message with role indicator and styling
-		var msgStyle lipgloss.Style
-		switch msg.Role {
-		case "user":
-			msgStyle = m.styles.UserMessage
-		case "assistant":
-			msgStyle = m.styles.AssistantMessage
-		case "system":
-			msgStyle = m.styles.SystemMessage
-		default:
-			msgStyle = m.styles.Message
-		}
+		msgStyle := m.getMessageStyle(msg.Role, msg.Source, pane.Agent.Name)
 		
-		// Add message header
-		msgHeader := fmt.Sprintf("[%s] %s", msg.Role, msg.Timestamp)
+		// Add message header with source indicator
+		var roleDisplay string
+		if msg.Role == "assistant" && msg.Source != pane.Agent.Name && msg.Source != "human" {
+			// Show truncated preview for inter-agent messages
+			preview := msg.Content
+			if len(preview) > 25 {
+				preview = preview[:25] + "..."
+			}
+			roleDisplay = fmt.Sprintf("from %s: %s", msg.Source, preview)
+		} else if msg.Role == "user" {
+			roleDisplay = "👤 Human"  // Human message
+		} else {
+			roleDisplay = msg.Role    // Own assistant or system message
+		}
+		msgHeader := fmt.Sprintf("[%s] %s", roleDisplay, msg.Timestamp)
 		contentLines = append(contentLines, msgStyle.Render(msgHeader))
 		
 		// Wrap and add message content with styling and code block detection
@@ -544,4 +603,239 @@ func (m *ChainExecutionModel) updatePaneContent(pane *AgentPane) {
 	}
 }
 
-// Helper methods continue in next part...
+// setupAgentChannels creates ChainAgents with channels based on DSL connections
+func (m *ChainExecutionModel) setupAgentChannels() {
+	debugLogger.Printf("Setting up agent channels for chain: %s", m.chain.DSL)
+	
+	// Create ChainAgents for each AI node
+	for i, node := range m.chain.Nodes {
+		if node.Type == chain.NodeTypeAI {
+			ctx, cancel := context.WithCancel(m.agentCtx)
+			
+			// Find the corresponding AgentPane and its index
+			var pane *AgentPane
+			var agentIndex int = -1
+			for j, ap := range m.AgentPanes {
+				if ap.Agent.ID == node.ID {
+					pane = ap
+					agentIndex = j
+					break
+				}
+			}
+			
+			agent := &ChainAgent{
+				ID:         node.ID,
+				Node:       &m.chain.Nodes[i],
+				Pane:       pane,
+				AgentIndex: agentIndex,
+				InChan:     make(chan AgentMessage, 10),  // Buffered channel
+				OutChans:   make(map[string]chan AgentMessage),
+				aiManager:  m.aiManager,
+				workingDir: m.workingDir,
+				UICallback: func(msg tea.Msg) tea.Cmd {
+					// Simple callback that returns the message as a command
+					return func() tea.Msg { return msg }
+				},
+				ctx:        ctx,
+				cancel:     cancel,
+			}
+			
+			m.ChainAgents[node.ID] = agent
+			debugLogger.Printf("Created ChainAgent: %s", node.ID)
+		}
+	}
+	
+	// Wire up channels based on DSL connections  
+	for _, conn := range m.chain.Connections {
+		fromAgent := m.ChainAgents[conn.From]
+		toAgent := m.ChainAgents[conn.To]
+		
+		if fromAgent != nil && toAgent != nil {
+			// Connect output of fromAgent to input of toAgent
+			fromAgent.OutChans[conn.To] = toAgent.InChan
+			debugLogger.Printf("Connected %s -> %s", conn.From, conn.To)
+			
+			// If bidirectional, also connect reverse  
+			if conn.Type == chain.ConnTwoWay {
+				toAgent.OutChans[conn.From] = fromAgent.InChan
+				debugLogger.Printf("Connected %s <-> %s (bidirectional)", conn.From, conn.To)
+			}
+		}
+	}
+	
+	// Start agent goroutines
+	for _, agent := range m.ChainAgents {
+		go agent.Run()
+		debugLogger.Printf("Started goroutine for agent: %s", agent.ID)
+	}
+}
+
+// Run starts the ChainAgent goroutine for processing messages
+func (a *ChainAgent) Run() {
+	debugLogger.Printf("ChainAgent %s: Starting goroutine", a.ID)
+	
+	for {
+		select {
+		case msg := <-a.InChan:
+			debugLogger.Printf("ChainAgent %s: Received message: %s", a.ID, msg.Content[:min(50, len(msg.Content))])
+			
+			// Update agent status to thinking
+			if a.Pane != nil {
+				a.Pane.Status = AgentThinking
+				a.Pane.LastActivity = "🤔 Thinking..."
+			}
+			
+			// Process message with Claude AI
+			response := a.processMessage(msg)
+			
+			// Update agent status back to idle with completion indicator
+			if a.Pane != nil {
+				a.Pane.Status = AgentIdle
+				if strings.Contains(response.Content, "[Tool calling limit reached") {
+					a.Pane.LastActivity = "⚠️ Stopped (tool loop)"
+				} else if strings.Contains(response.Content, "[Stopped infinite loop") {
+					a.Pane.LastActivity = "🛑 Stopped (infinite loop)"
+				} else {
+					a.Pane.LastActivity = "✅ Completed"
+				}
+			}
+			
+			// Add response directly to agent pane (simpler approach)
+			if a.Pane != nil && a.AgentIndex >= 0 {
+				responseMsg := AgentMessage{
+					Role:      "assistant",
+					Content:   response.Content,
+					Timestamp: response.Timestamp,
+					Source:    a.ID,
+				}
+				
+				// Add response to pane messages
+				a.Pane.Messages = append(a.Pane.Messages, responseMsg)
+				debugLogger.Printf("ChainAgent %s: Added response to pane (index %d)", a.ID, a.AgentIndex)
+				
+				// Update pane status
+				a.Pane.Status = AgentIdle
+				a.Pane.LastActivity = "Ready"
+				
+				// TODO: Need to trigger UI refresh here - the Bubble Tea program needs to know state changed
+			}
+			
+			// Send response to connected agents
+			for targetID, outChan := range a.OutChans {
+				select {
+				case outChan <- AgentMessage{
+					Role:      "assistant",
+					Content:   response.Content,
+					Timestamp: response.Timestamp,
+					Source:    a.ID,
+				}:
+					debugLogger.Printf("ChainAgent %s: Sent message to %s", a.ID, targetID)
+				default:
+					debugLogger.Printf("ChainAgent %s: Failed to send to %s (channel full)", a.ID, targetID)
+				}
+			}
+			
+		case <-a.ctx.Done():
+			debugLogger.Printf("ChainAgent %s: Shutting down", a.ID)
+			return
+		}
+	}
+}
+
+// processMessage processes a message using Claude AI with tools
+func (a *ChainAgent) processMessage(msg AgentMessage) AgentMessage {
+	// Build AI context with working directory
+	aiContext := ai.AIContext{
+		SystemPrompt: a.Node.SystemPrompt,
+		ConversationHistory: a.getConversationHistory(),
+		Temperature: 0.7,
+		MaxTokens: 1024,
+		CodeContext: &ai.CodeContext{
+			Directory: a.workingDir,
+		},
+	}
+	
+	// Get Claude provider
+	provider, err := a.aiManager.GetProvider("claude")
+	if err != nil || provider == nil {
+		debugLogger.Printf("ChainAgent %s: No Claude provider available: %v", a.ID, err)
+		return AgentMessage{
+			Role:      "assistant", 
+			Content:   "Error: No AI provider available",
+			Timestamp: msg.Timestamp,
+			Source:    a.ID,
+		}
+	}
+	
+	// Send message to Claude
+	response, err := provider.SendMessage(context.Background(), msg.Content, aiContext)
+	if err != nil {
+		debugLogger.Printf("ChainAgent %s: AI error: %v", a.ID, err)
+		return AgentMessage{
+			Role:      "assistant",
+			Content:   fmt.Sprintf("Error: %v", err),
+			Timestamp: msg.Timestamp,
+			Source:    a.ID,
+		}
+	}
+	
+	// Add both input and response to pane
+	if a.Pane != nil {
+		// Add user message
+		a.Pane.Messages = append(a.Pane.Messages, msg)
+		
+		// Add assistant response  
+		responseMsg := AgentMessage{
+			Role:      "assistant",
+			Content:   response.Content,
+			Timestamp: msg.Timestamp,
+			Source:    a.ID,
+		}
+		a.Pane.Messages = append(a.Pane.Messages, responseMsg)
+	}
+	
+	return AgentMessage{
+		Role:      "assistant",
+		Content:   response.Content,
+		Timestamp: msg.Timestamp,
+		Source:    a.ID,
+	}
+}
+
+// getConversationHistory gets conversation history for AI context
+func (a *ChainAgent) getConversationHistory() []ai.Message {
+	if a.Pane == nil {
+		return []ai.Message{}
+	}
+	
+	var history []ai.Message
+	for _, msg := range a.Pane.Messages {
+		// Parse timestamp, use current time as fallback
+		timestamp, err := time.Parse("15:04:05", msg.Timestamp)
+		if err != nil {
+			timestamp = time.Now()
+		}
+		
+		history = append(history, ai.Message{
+			Role:      msg.Role,
+			Content:   msg.Content,
+			Timestamp: timestamp,
+		})
+	}
+	return history
+}
+
+// scheduleRefresh creates a command to refresh the UI after a delay
+func (m *ChainExecutionModel) scheduleRefresh() tea.Cmd {
+	return tea.Tick(time.Millisecond*500, func(t time.Time) tea.Msg {
+		return RefreshUIMsg{}
+	})
+}
+
+// Helper function for min
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}

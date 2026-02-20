@@ -88,13 +88,67 @@ func main() {
 		return
 	}
 
+	// Check for DSL file argument
+	args := flag.Args()
+	if len(args) > 0 {
+		dslFile := args[0]
+		
+		// Initialize application
+		application := app.NewApplication()
+		if err := application.Initialize(); err != nil {
+			log.Fatalf("Failed to initialize application: %v", err)
+		}
+		
+		// Create TUI model directly with DSL file
+		tuiModel := tui.NewModelWithDSLFile(application, dslFile)
+		
+		// Create Bubble Tea program
+		var programOptions []tea.ProgramOption
+		if !*debugFlag {
+			programOptions = append(programOptions, 
+				tea.WithAltScreen(),       // Use alternate screen buffer
+				tea.WithMouseCellMotion(), // Enable mouse support
+			)
+		} else {
+			// Debug mode: no alt screen, allows text selection
+			programOptions = append(programOptions, tea.WithMouseCellMotion())
+			fmt.Println("Debug mode enabled - check claudevim-debug.log for detailed logs")
+		}
+		
+		program := tea.NewProgram(tuiModel, programOptions...)
+		
+		// Handle graceful shutdown
+		_, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		
+		// Handle interrupt signals
+		sigChan := make(chan os.Signal, 1)
+		signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+		
+		go func() {
+			<-sigChan
+			fmt.Fprintln(os.Stderr, "\nShutting down AIChain...")
+			application.Shutdown()
+			program.Quit()
+			cancel()
+		}()
+		
+		// Start the TUI
+		if _, err := program.Run(); err != nil {
+			log.Fatalf("Error running program: %v", err)
+		}
+		return
+	}
+
 	// Default: show help
 	fmt.Printf("AIChain v%s - VIM with AI Superpowers\n\n", version)
 	fmt.Println("Usage:")
-	fmt.Println("  claudevim --server [--port 8747]    Start the backend server")
-	fmt.Println("  claudevim --setup                   Run interactive setup")
-	fmt.Println("  claudevim --version                 Show version")
+	fmt.Println("  aichain [dsl-file]                  Execute a DSL file")
+	fmt.Println("  aichain --setup                     Run interactive setup")
+	fmt.Println("  aichain --server [--port 8747]      Start the backend server")
+	fmt.Println("  aichain --version                   Show version")
 	fmt.Println("")
-	fmt.Println("For VIM integration, add to your .vimrc:")
-	fmt.Println("  Plugin 'claudevim/claudevim'")
+	fmt.Println("Examples:")
+	fmt.Println("  aichain my-chain.dsl                Run agents defined in my-chain.dsl")
+	fmt.Println("  aichain --setup                     Interactive chain builder")
 }

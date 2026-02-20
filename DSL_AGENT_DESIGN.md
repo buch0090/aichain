@@ -174,4 +174,110 @@ Flow:
 - ✅ Basic Claude API integration
 - ✅ Chain setup and execution UI
 - ✅ Agent panes with scrolling
-- 🔄 **Next**: Implement multi-agent channel communication system
+- ✅ Multi-agent channel communication system
+- ✅ Dynamic channel setup from DSL topology
+- ✅ Agent goroutines with message processing
+- ✅ UI refresh system for real-time updates
+- ✅ Tool calling integration (read_file, write_file, list_files)
+- ✅ Tool calling loop protection (5-round limit)
+
+## Implementation Details
+
+### Channel Communication System
+
+The agent-to-agent communication is fully implemented using Go channels:
+
+```go
+type ChainAgent struct {
+    ID         string
+    Node       *chain.ChainNode
+    Pane       *AgentPane
+    AgentIndex int
+    
+    // Channels for inter-agent communication  
+    InChan     chan AgentMessage
+    OutChans   map[string]chan AgentMessage
+    
+    // Agent processing
+    aiManager  *ai.Manager
+    workingDir string
+    UICallback func(tea.Msg) tea.Cmd
+    
+    // Control
+    ctx        context.Context
+    cancel     context.CancelFunc
+    mu         sync.RWMutex
+}
+```
+
+### Dynamic Channel Setup
+
+Channels are automatically created based on DSL topology:
+
+```go
+func (m *ChainExecutionModel) setupAgentChannels() {
+    for _, connection := range m.chain.Connections {
+        fromAgent := m.ChainAgents[connection.From]
+        toAgent := m.ChainAgents[connection.To]
+        
+        if connection.Type == chain.ConnOneWay {
+            fromAgent.OutChans[connection.To] = toAgent.InChan
+        } else if connection.Type == chain.ConnTwoWay {
+            fromAgent.OutChans[connection.To] = toAgent.InChan
+            toAgent.OutChans[connection.From] = fromAgent.InChan
+        }
+    }
+}
+```
+
+### Agent Message Processing
+
+Each agent runs in its own goroutine, processing messages from channels:
+
+```go
+func (a *ChainAgent) Run(ctx context.Context) {
+    for {
+        select {
+        case msg := <-a.InChan:
+            response := a.processMessage(msg)
+            if response != nil {
+                a.routeMessage(*response)
+            }
+        case <-ctx.Done():
+            return
+        }
+    }
+}
+```
+
+### UI Synchronization
+
+Real-time UI updates are achieved through a refresh system:
+
+```go
+type RefreshUIMsg struct{}
+
+func refreshUICmd() tea.Cmd {
+    return tea.Tick(time.Millisecond*500, func(time.Time) tea.Msg {
+        return RefreshUIMsg{}
+    })
+}
+```
+
+### Tool Calling Protection
+
+Infinite tool calling loops are prevented with a 5-round limit:
+
+```go
+maxToolRounds := 5
+toolRounds := 0
+
+for {
+    toolRounds++
+    if toolRounds > maxToolRounds {
+        finalContent.WriteString("\n[Tool calling limit reached - response may be incomplete]")
+        break
+    }
+    // ... tool execution logic
+}
+```

@@ -12,11 +12,11 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-// sendMessageToChain sends a message to the AI chain
+// sendMessageToChain sends a message to the AI chain using channels
 func (m *ChainExecutionModel) sendMessageToChain(message string) tea.Cmd {
 	debugLogger.Printf("sendMessageToChain called with message: %s", message)
 	
-	// Add user message to all agent panes that should receive it
+	// Create user message
 	userMsg := AgentMessage{
 		Role:      "user",
 		Content:   message,
@@ -24,25 +24,59 @@ func (m *ChainExecutionModel) sendMessageToChain(message string) tea.Cmd {
 		Source:    "human",
 	}
 
-	// For now, add to all agents (later we'll implement proper chain routing)
-	for _, pane := range m.AgentPanes {
-		pane.Messages = append(pane.Messages, userMsg)
-		pane.Status = AgentThinking
-		pane.LastActivity = "Processing..."
-		
-		// Update viewport content
-		m.updatePaneContent(pane)
+	// Find the first agent in the chain (entry point)
+	var firstAgent *ChainAgent
+	if len(m.chain.Nodes) > 0 {
+		// Look for the first AI node in the chain
+		for _, node := range m.chain.Nodes {
+			if node.Type == "ai" {
+				if agent, exists := m.ChainAgents[node.ID]; exists {
+					firstAgent = agent
+					break
+				}
+			}
+		}
 	}
-
-	// NUCLEAR OPTION: Execute the first agent immediately and return the response as a command
-	if len(m.AgentPanes) > 0 {
-		debugLogger.Printf("NUCLEAR: Executing agent 0 immediately")
+	
+	if firstAgent != nil {
+		debugLogger.Printf("Sending message to first agent: %s", firstAgent.ID)
 		
+		// Add user message to the first agent's pane
+		if firstAgent.Pane != nil {
+			firstAgent.Pane.Messages = append(firstAgent.Pane.Messages, userMsg)
+			firstAgent.Pane.Status = AgentThinking
+			firstAgent.Pane.LastActivity = "Processing..."
+			m.updatePaneContent(firstAgent.Pane)
+		}
+		
+		// Send message to first agent's channel and start UI refresh
 		return func() tea.Msg {
-			debugLogger.Printf("NUCLEAR: Command executing, calling agent 0")
-			response := m.callAIAgent(0, message)
-			debugLogger.Printf("NUCLEAR: Got response from agent 0: %v", response != nil)
-			return response
+			select {
+			case firstAgent.InChan <- userMsg:
+				debugLogger.Printf("Message sent to agent %s via channel", firstAgent.ID)
+			default:
+				debugLogger.Printf("Failed to send message to agent %s (channel full)", firstAgent.ID)
+			}
+			// Start UI refresh cycle
+			return RefreshUIMsg{}
+		}
+	} else {
+		debugLogger.Printf("No agents found in chain")
+		
+		// Fallback to old behavior if no agents configured
+		for _, pane := range m.AgentPanes {
+			pane.Messages = append(pane.Messages, userMsg)
+			pane.Status = AgentThinking
+			pane.LastActivity = "Processing..."
+			m.updatePaneContent(pane)
+		}
+		
+		// Still use old direct call as fallback
+		if len(m.AgentPanes) > 0 {
+			return func() tea.Msg {
+				response := m.callAIAgent(0, message)
+				return response
+			}
 		}
 	}
 	
@@ -202,14 +236,19 @@ func (m *ChainExecutionModel) getStatusStyle(status AgentStatus) lipgloss.Style 
 }
 
 // getMessageStyle returns the style for different message types
-func (m *ChainExecutionModel) getMessageStyle(role string) lipgloss.Style {
+func (m *ChainExecutionModel) getMessageStyle(role string, source string, currentAgentID string) lipgloss.Style {
 	switch role {
 	case "user":
-		return m.styles.UserMessage
-	case "assistant":
-		return m.styles.AssistantMessage
+		return m.styles.UserMessage                    // Human messages - bright green
 	case "system":
-		return m.styles.SystemMessage
+		return m.styles.SystemMessage                  // System messages - orange/red
+	case "assistant":
+		// Check if this is from the current agent or another agent
+		if source == currentAgentID || source == "human" {
+			return m.styles.AssistantMessage           // Own messages - blue
+		} else {
+			return m.styles.InterAgentMessage          // From other agents - purple
+		}
 	default:
 		return m.styles.Message
 	}
@@ -292,6 +331,10 @@ func createChainExecutionStyles() ChainExecutionStyles {
 
 		SystemMessage: lipgloss.NewStyle().
 			Foreground(lipgloss.Color("#ffaa88")),
+
+		InterAgentMessage: lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#ffffff")).
+			Background(lipgloss.Color("#2a1a3a")),    // Subtle dark purple background
 
 		Input: lipgloss.NewStyle().
 			Border(lipgloss.NormalBorder()).
