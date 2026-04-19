@@ -6,9 +6,13 @@ import (
 	"time"
 )
 
+// StreamCallback is called with each text delta as it streams from the API.
+type StreamCallback func(delta string)
+
 // Provider defines the interface for AI providers
 type Provider interface {
 	SendMessage(ctx context.Context, prompt string, context AIContext) (*AIResponse, error)
+	SendMessageStreaming(ctx context.Context, prompt string, context AIContext, onDelta StreamCallback) (*AIResponse, error)
 	GetModels() []Model
 	GetCapabilities() Capabilities
 	GetRateLimits() RateLimits

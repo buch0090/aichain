@@ -59,14 +59,20 @@ func (c *ClaudeProvider) GetProviderName() string {
 	return "claude"
 }
 
-// SendMessage sends a message to Claude using the official SDK with proper tool calling
+// SendMessage sends a message without streaming (blocks until complete).
 func (c *ClaudeProvider) SendMessage(ctx context.Context, prompt string, aiContext AIContext) (*AIResponse, error) {
+	return c.SendMessageStreaming(ctx, prompt, aiContext, nil)
+}
+
+// SendMessageStreaming sends a message to Claude with streaming text deltas.
+// The onDelta callback is invoked for each text chunk as it arrives from the API.
+// If onDelta is nil, behaves like a blocking call.
+func (c *ClaudeProvider) SendMessageStreaming(ctx context.Context, prompt string, aiContext AIContext, onDelta StreamCallback) (*AIResponse, error) {
 	// Build messages from conversation history and current prompt
 	messages := make([]anthropic.MessageParam, 0, len(aiContext.ConversationHistory)+1)
-	
-	// Add conversation history
+
 	for _, msg := range aiContext.ConversationHistory {
-		if msg.Role != "system" { // System messages go in the system field
+		if msg.Role != "system" {
 			if msg.Role == "user" {
 				messages = append(messages, anthropic.NewUserMessage(anthropic.NewTextBlock(msg.Content)))
 			} else if msg.Role == "assistant" {
@@ -75,138 +81,118 @@ func (c *ClaudeProvider) SendMessage(ctx context.Context, prompt string, aiConte
 		}
 	}
 
-	// Add current prompt
 	messages = append(messages, anthropic.NewUserMessage(anthropic.NewTextBlock(prompt)))
 
-	// Set defaults if not provided
 	temperature := aiContext.Temperature
 	if temperature == 0 {
 		temperature = 0.7
 	}
-	
 	maxTokens := aiContext.MaxTokens
 	if maxTokens == 0 {
 		maxTokens = 1024
 	}
 
-	// Define tools
 	tools := buildToolDefinitions()
 
-	// Prepare the request params
 	params := anthropic.MessageNewParams{
 		Model:     anthropic.ModelClaudeSonnet4_5_20250929,
 		MaxTokens: int64(maxTokens),
 		Messages:  messages,
 		Tools:     tools,
 	}
-
-	// Add system prompt properly
 	if aiContext.SystemPrompt != "" {
 		params.System = []anthropic.TextBlockParam{{
-			Type: "text", 
+			Type: "text",
 			Text: aiContext.SystemPrompt,
 		}}
 	}
-
-	// Add temperature if provided
 	if temperature != 0 {
 		params.Temperature = anthropic.Float(temperature)
 	}
 
-	// Tool calling loop — no hard round limit. The model decides when to stop.
-	// We only break on: (a) model stops calling tools, (b) repeated identical
-	// failures (infinite loop), or (c) context timeout.
+	// Tool calling loop — no hard round limit.
 	allMessages := messages
 	var finalContent strings.Builder
 	toolRounds := 0
-	
-	// Track repeated tool failures to break infinite loops
+
 	var lastToolCall string
 	var lastToolError string
 	consecutiveFailures := 0
-	
+
 	for {
 		toolRounds++
 		c.sdkLogger.Printf("Tool round %d", toolRounds)
-		// Make the API call
-		message, err := c.client.Messages.New(ctx, anthropic.MessageNewParams{
+
+		roundParams := anthropic.MessageNewParams{
 			Model:       params.Model,
 			MaxTokens:   params.MaxTokens,
 			Messages:    allMessages,
 			Tools:       params.Tools,
 			System:      params.System,
 			Temperature: params.Temperature,
-		})
+		}
+
+		// Stream the response
+		contentBlocks, err := c.streamOneRound(ctx, roundParams, &finalContent, onDelta)
 		if err != nil {
 			return nil, fmt.Errorf("Claude API request failed: %w", err)
 		}
 
-		// Process content blocks and look for tool uses
+		// Process accumulated content blocks for tool calls
 		var toolResults []anthropic.ContentBlockParamUnion
 		hasTools := false
-		
-		c.sdkLogger.Printf("Processing %d content blocks", len(message.Content))
-		
-		for _, block := range message.Content {
-			c.sdkLogger.Printf("Block type: %s", block.Type)
-			if block.Type == "text" {
-				textBlock := block.AsText()
-				c.sdkLogger.Printf("Text block content: %q", textBlock.Text)
-				finalContent.WriteString(textBlock.Text)
-			} else if block.Type == "tool_use" {
+
+		for _, block := range contentBlocks {
+			if block.blockType == "tool_use" {
 				hasTools = true
-				toolUseBlock := block.AsToolUse()
-				
-				c.sdkLogger.Printf("Tool use detected - Name: %s, ID: %s, Input: %+v", toolUseBlock.Name, toolUseBlock.ID, toolUseBlock.Input)
-				
-				// Execute the tool
-				toolResult, toolError := c.executeToolFunction(toolUseBlock.Name, toolUseBlock.Input, aiContext)
-				
-				c.sdkLogger.Printf("Tool execution result - Name: %s, Error: %v, Result: %q", toolUseBlock.Name, toolError, toolResult)
-				
-				// Track consecutive failures to break infinite loops  
-				inputBytes, _ := json.Marshal(toolUseBlock.Input)
-				currentToolCall := fmt.Sprintf("%s:%s", toolUseBlock.Name, string(inputBytes))
+
+				c.sdkLogger.Printf("Tool use detected - Name: %s, ID: %s", block.toolName, block.toolID)
+
+				toolResult, toolError := c.executeToolFunction(block.toolName, json.RawMessage(block.toolInput), aiContext)
+
+				c.sdkLogger.Printf("Tool execution result - Name: %s, Error: %v", block.toolName, toolError)
+
+				// Track consecutive failures
+				currentToolCall := fmt.Sprintf("%s:%s", block.toolName, block.toolInput)
 				currentToolErrorStr := ""
 				if toolError != nil {
 					currentToolErrorStr = toolError.Error()
 				}
-				
+
 				if currentToolCall == lastToolCall && currentToolErrorStr == lastToolError && toolError != nil {
 					consecutiveFailures++
-					c.sdkLogger.Printf("Consecutive failure #%d for tool %s with same error: %s", consecutiveFailures, toolUseBlock.Name, toolError)
-					
 					if consecutiveFailures >= 3 {
-						c.sdkLogger.Printf("Breaking infinite loop - same tool call failed 3 times in a row")
-						finalContent.WriteString(fmt.Sprintf("\n[Stopped infinite loop: %s failed repeatedly with: %s]", toolUseBlock.Name, toolError))
-						hasTools = false // Force exit from tool calling loop
+						c.sdkLogger.Printf("Breaking infinite loop - same tool call failed 3 times")
+						finalContent.WriteString(fmt.Sprintf("\n[Stopped infinite loop: %s failed repeatedly with: %s]", block.toolName, toolError))
+						hasTools = false
 						break
 					}
 				} else {
-					consecutiveFailures = 0 // Reset counter for different tool calls or successful calls
+					consecutiveFailures = 0
 				}
-				
 				lastToolCall = currentToolCall
 				lastToolError = currentToolErrorStr
-				
-				// Create tool result block
+
 				if toolError != nil {
-					toolResults = append(toolResults, anthropic.NewToolResultBlock(toolUseBlock.ID, fmt.Sprintf("Error: %v", toolError), true))
+					toolResults = append(toolResults, anthropic.NewToolResultBlock(block.toolID, fmt.Sprintf("Error: %v", toolError), true))
 				} else {
-					toolResults = append(toolResults, anthropic.NewToolResultBlock(toolUseBlock.ID, toolResult, false))
+					toolResults = append(toolResults, anthropic.NewToolResultBlock(block.toolID, toolResult, false))
 				}
 			}
 		}
-		
-		// If no tools were used, we're done
+
 		if !hasTools {
 			break
 		}
-		
-		// Add assistant message and tool results, then continue the loop
-		assistantBlocks := make([]anthropic.ContentBlockParamUnion, len(message.Content))
-		for i, block := range message.Content {
-			assistantBlocks[i] = block.ToParam()
+
+		// Rebuild assistant message from accumulated blocks for the conversation
+		var assistantBlocks []anthropic.ContentBlockParamUnion
+		for _, block := range contentBlocks {
+			if block.blockType == "text" {
+				assistantBlocks = append(assistantBlocks, anthropic.NewTextBlock(block.text))
+			} else if block.blockType == "tool_use" {
+				assistantBlocks = append(assistantBlocks, anthropic.NewToolUseBlock(block.toolID, json.RawMessage(block.toolInput), block.toolName))
+			}
 		}
 		allMessages = append(allMessages, anthropic.NewAssistantMessage(assistantBlocks...))
 		allMessages = append(allMessages, anthropic.NewUserMessage(toolResults...))
@@ -214,12 +200,92 @@ func (c *ClaudeProvider) SendMessage(ctx context.Context, prompt string, aiConte
 
 	return &AIResponse{
 		Content:      strings.TrimSpace(finalContent.String()),
-		TokensUsed:   0, // TODO: Get from response usage
+		TokensUsed:   0,
 		Model:        "claude-sonnet-4.5",
 		Confidence:   1.0,
 		InputTokens:  0,
 		OutputTokens: 0,
 	}, nil
+}
+
+// streamBlock holds accumulated data for one content block during streaming.
+type streamBlock struct {
+	blockType string // "text" or "tool_use"
+	text      string // accumulated text (for text blocks)
+	toolID    string
+	toolName  string
+	toolInput string // accumulated JSON string (for tool_use blocks)
+}
+
+// streamOneRound streams a single API call, invoking onDelta for text chunks
+// and returning the accumulated content blocks for tool processing.
+func (c *ClaudeProvider) streamOneRound(
+	ctx context.Context,
+	params anthropic.MessageNewParams,
+	finalContent *strings.Builder,
+	onDelta StreamCallback,
+) ([]streamBlock, error) {
+	stream := c.client.Messages.NewStreaming(ctx, params)
+	defer stream.Close()
+
+	var blocks []streamBlock
+	currentIndex := -1
+
+	for stream.Next() {
+		event := stream.Current()
+
+		switch event.Type {
+		case "content_block_start":
+			startEvt := event.AsContentBlockStart()
+			currentIndex = int(startEvt.Index)
+
+			// Grow blocks slice to fit
+			for len(blocks) <= currentIndex {
+				blocks = append(blocks, streamBlock{})
+			}
+
+			switch startEvt.ContentBlock.Type {
+			case "text":
+				blocks[currentIndex].blockType = "text"
+			case "tool_use":
+				blocks[currentIndex].blockType = "tool_use"
+				blocks[currentIndex].toolID = startEvt.ContentBlock.ID
+				blocks[currentIndex].toolName = startEvt.ContentBlock.Name
+			}
+
+		case "content_block_delta":
+			deltaEvt := event.AsContentBlockDelta()
+			idx := int(deltaEvt.Index)
+			if idx >= 0 && idx < len(blocks) {
+				switch deltaEvt.Delta.Type {
+				case "text_delta":
+					text := deltaEvt.Delta.Text
+					blocks[idx].text += text
+					finalContent.WriteString(text)
+					if onDelta != nil {
+						onDelta(text)
+					}
+				case "input_json_delta":
+					blocks[idx].toolInput += deltaEvt.Delta.PartialJSON
+				}
+			}
+
+		case "content_block_stop":
+			// Block is complete, nothing to do
+
+		case "message_stop":
+			// Message complete
+
+		case "message_delta":
+			// Contains stop_reason etc, we handle via hasTools check
+		}
+	}
+
+	if err := stream.Err(); err != nil {
+		return nil, err
+	}
+
+	return blocks, nil
 }
 
 // executeToolFunction executes a tool function based on the tool name and input

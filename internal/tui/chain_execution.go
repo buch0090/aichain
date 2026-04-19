@@ -794,31 +794,53 @@ Format:
 		}
 	}
 	
-	// Send message to Claude
-	debugLogger.Printf("ChainAgent %s: calling API | history_len=%d prompt_preview=%q",
+	// Create a partial message in the pane for streaming updates.
+	// The UI refresh tick will pick up content as it grows.
+	var streamMsgIndex int
+	if a.Pane != nil {
+		a.Pane.Messages = append(a.Pane.Messages, AgentMessage{
+			Role:      "assistant",
+			Content:   "",
+			Timestamp: msg.Timestamp,
+			Source:    a.ID,
+		})
+		streamMsgIndex = len(a.Pane.Messages) - 1
+	}
+
+	// Stream callback — appends each text delta to the pane message in place.
+	onDelta := func(delta string) {
+		if a.Pane != nil && streamMsgIndex < len(a.Pane.Messages) {
+			a.Pane.Messages[streamMsgIndex].Content += delta
+		}
+	}
+
+	// Send message to Claude with streaming
+	debugLogger.Printf("ChainAgent %s: calling API (streaming) | history_len=%d prompt_preview=%q",
 		a.ID, len(history), msg.Content[:min(80, len(msg.Content))])
-	response, err := provider.SendMessage(context.Background(), msg.Content, aiContext)
+	response, err := provider.SendMessageStreaming(context.Background(), msg.Content, aiContext, onDelta)
 	if err != nil {
 		debugLogger.Printf("ChainAgent %s: API ERROR history_len=%d: %v", a.ID, len(history), err)
+		errorContent := fmt.Sprintf("Error: %v", err)
+		// Update the partial message with the error
+		if a.Pane != nil && streamMsgIndex < len(a.Pane.Messages) {
+			a.Pane.Messages[streamMsgIndex].Content = errorContent
+		}
 		return AgentMessage{
 			Role:      "assistant",
-			Content:   fmt.Sprintf("Error: %v", err),
+			Content:   errorContent,
 			Timestamp: msg.Timestamp,
 			Source:    a.ID,
 		}
 	}
 	debugLogger.Printf("ChainAgent %s: API success | response_len=%d", a.ID, len(response.Content))
-	
-	// Add response to pane (incoming message was already appended in Run before the API call)
-	if a.Pane != nil {
-		a.Pane.Messages = append(a.Pane.Messages, AgentMessage{
-			Role:      "assistant",
-			Content:   response.Content,
-			Timestamp: msg.Timestamp,
-			Source:    a.ID,
-		})
+
+	// Ensure the pane message has the final complete content
+	// (streaming may have already built it up, but tool-calling rounds
+	// accumulate text across multiple API calls, so set the final result)
+	if a.Pane != nil && streamMsgIndex < len(a.Pane.Messages) {
+		a.Pane.Messages[streamMsgIndex].Content = response.Content
 	}
-	
+
 	return AgentMessage{
 		Role:      "assistant",
 		Content:   response.Content,
@@ -876,9 +898,17 @@ func (a *ChainAgent) getConversationHistory() []ai.Message {
 	return history
 }
 
-// scheduleRefresh creates a command to refresh the UI after a delay
+// scheduleRefresh creates a command to refresh the UI after a delay.
+// Uses a faster interval when agents are actively processing.
 func (m *ChainExecutionModel) scheduleRefresh() tea.Cmd {
-	return tea.Tick(time.Millisecond*500, func(t time.Time) tea.Msg {
+	interval := 500 * time.Millisecond
+	for _, pane := range m.AgentPanes {
+		if pane.Status == AgentThinking || pane.Status == AgentResponding {
+			interval = 100 * time.Millisecond
+			break
+		}
+	}
+	return tea.Tick(interval, func(t time.Time) tea.Msg {
 		return RefreshUIMsg{}
 	})
 }

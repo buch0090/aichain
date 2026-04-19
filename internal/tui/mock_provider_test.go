@@ -28,15 +28,28 @@ func NewMockProvider(handler func(string, ai.AIContext) (*ai.AIResponse, error))
 }
 
 func (m *MockProvider) SendMessage(ctx context.Context, prompt string, aiCtx ai.AIContext) (*ai.AIResponse, error) {
+	return m.SendMessageStreaming(ctx, prompt, aiCtx, nil)
+}
+
+func (m *MockProvider) SendMessageStreaming(ctx context.Context, prompt string, aiCtx ai.AIContext, onDelta ai.StreamCallback) (*ai.AIResponse, error) {
 	m.mu.Lock()
 	m.Calls = append(m.Calls, MockCall{Prompt: prompt, Context: aiCtx})
 	handler := m.Handler
 	m.mu.Unlock()
 
+	var resp *ai.AIResponse
+	var err error
 	if handler == nil {
-		return &ai.AIResponse{Content: "mock response"}, nil
+		resp = &ai.AIResponse{Content: "mock response"}
+	} else {
+		resp, err = handler(prompt, aiCtx)
 	}
-	return handler(prompt, aiCtx)
+
+	// Simulate streaming by sending the full content as one delta
+	if err == nil && resp != nil && onDelta != nil {
+		onDelta(resp.Content)
+	}
+	return resp, err
 }
 
 func (m *MockProvider) GetCallCount() int {
