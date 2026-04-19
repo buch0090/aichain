@@ -40,15 +40,16 @@ func (m *ChainExecutionModel) sendMessageToChain(message string) tea.Cmd {
 	
 	if firstAgent != nil {
 		debugLogger.Printf("Sending message to first agent: %s", firstAgent.ID)
-		
-		// Add user message to the first agent's pane
+
+		// Set status immediately for responsive UI, but do NOT append the message
+		// here — Run() appends it when it dequeues from InChan, so doing it here
+		// too would create a duplicate in the pane and in the conversation history
+		// sent to the API.
 		if firstAgent.Pane != nil {
-			firstAgent.Pane.Messages = append(firstAgent.Pane.Messages, userMsg)
 			firstAgent.Pane.Status = AgentThinking
 			firstAgent.Pane.LastActivity = "Processing..."
-			m.updatePaneContent(firstAgent.Pane)
 		}
-		
+
 		// Send message to first agent's channel and start UI refresh
 		return func() tea.Msg {
 			select {

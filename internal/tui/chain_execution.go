@@ -545,23 +545,25 @@ func (m *ChainExecutionModel) updatePaneContent(pane *AgentPane) {
 	for _, msg := range pane.Messages {
 		// Format message with role indicator and styling
 		msgStyle := m.getMessageStyle(msg.Role, msg.Source, pane.Agent.Name)
-		
-		// Add message header with source indicator
-		var roleDisplay string
+
+		// Render header — inter-agent messages get a separator line, others get a bracketed label
 		if msg.Role == "assistant" && msg.Source != pane.Agent.Name && msg.Source != "human" {
-			// Show truncated preview for inter-agent messages
-			preview := msg.Content
-			if len(preview) > 25 {
-				preview = preview[:25] + "..."
+			label := fmt.Sprintf(" from %s ", msg.Source)
+			dashCount := pane.Viewport.Width - 4 - len(label) - len(msg.Timestamp)
+			if dashCount < 2 {
+				dashCount = 2
 			}
-			roleDisplay = fmt.Sprintf("from %s: %s", msg.Source, preview)
-		} else if msg.Role == "user" {
-			roleDisplay = "👤 Human"  // Human message
+			separator := "──" + label + strings.Repeat("─", dashCount) + " " + msg.Timestamp
+			contentLines = append(contentLines, msgStyle.Render(separator))
 		} else {
-			roleDisplay = msg.Role    // Own assistant or system message
+			var roleDisplay string
+			if msg.Role == "user" {
+				roleDisplay = "👤 Human"
+			} else {
+				roleDisplay = msg.Role
+			}
+			contentLines = append(contentLines, msgStyle.Render(fmt.Sprintf("[%s] %s", roleDisplay, msg.Timestamp)))
 		}
-		msgHeader := fmt.Sprintf("[%s] %s", roleDisplay, msg.Timestamp)
-		contentLines = append(contentLines, msgStyle.Render(msgHeader))
 		
 		// Wrap and add message content with styling and code block detection
 		content := m.wrapText(msg.Content, pane.Viewport.Width-2)
@@ -677,17 +679,22 @@ func (a *ChainAgent) Run() {
 	for {
 		select {
 		case msg := <-a.InChan:
-			debugLogger.Printf("ChainAgent %s: Received message: %s", a.ID, msg.Content[:min(50, len(msg.Content))])
-			
-			// Update agent status to thinking
+			debugLogger.Printf("ChainAgent %s: Received message | role=%s source=%s len=%d preview=%q",
+				a.ID, msg.Role, msg.Source, len(msg.Content), msg.Content[:min(80, len(msg.Content))])
+
+			// Show the incoming message immediately, before the API call
 			if a.Pane != nil {
+				a.Pane.Messages = append(a.Pane.Messages, msg)
 				a.Pane.Status = AgentThinking
 				a.Pane.LastActivity = "🤔 Thinking..."
 			}
-			
+
 			// Process message with Claude AI
 			response := a.processMessage(msg)
-			
+
+			debugLogger.Printf("ChainAgent %s: Response ready | len=%d outbound_agents=%d preview=%q",
+				a.ID, len(response.Content), len(a.OutChans), response.Content[:min(80, len(response.Content))])
+
 			// Update agent status back to idle with completion indicator
 			if a.Pane != nil {
 				a.Pane.Status = AgentIdle
@@ -699,39 +706,25 @@ func (a *ChainAgent) Run() {
 					a.Pane.LastActivity = "✅ Completed"
 				}
 			}
-			
-			// Add response directly to agent pane (simpler approach)
-			if a.Pane != nil && a.AgentIndex >= 0 {
-				responseMsg := AgentMessage{
-					Role:      "assistant",
-					Content:   response.Content,
-					Timestamp: response.Timestamp,
-					Source:    a.ID,
-				}
-				
-				// Add response to pane messages
-				a.Pane.Messages = append(a.Pane.Messages, responseMsg)
-				debugLogger.Printf("ChainAgent %s: Added response to pane (index %d)", a.ID, a.AgentIndex)
-				
-				// Update pane status
-				a.Pane.Status = AgentIdle
-				a.Pane.LastActivity = "Ready"
-				
-				// TODO: Need to trigger UI refresh here - the Bubble Tea program needs to know state changed
-			}
-			
-			// Send response to connected agents
+
+			// Forward only the <to_next_agent> block to connected agents; fall back to
+			// full content if the agent didn't follow the structured output format.
+			forwardContent := extractForwardContent(response.Content)
+			usedStructured := forwardContent != response.Content
+			debugLogger.Printf("ChainAgent %s: Forward content | structured=%v len=%d preview=%q",
+				a.ID, usedStructured, len(forwardContent), forwardContent[:min(80, len(forwardContent))])
+
 			for targetID, outChan := range a.OutChans {
 				select {
 				case outChan <- AgentMessage{
 					Role:      "assistant",
-					Content:   response.Content,
+					Content:   forwardContent,
 					Timestamp: response.Timestamp,
 					Source:    a.ID,
 				}:
-					debugLogger.Printf("ChainAgent %s: Sent message to %s", a.ID, targetID)
+					debugLogger.Printf("ChainAgent %s: Sent to %s | len=%d", a.ID, targetID, len(forwardContent))
 				default:
-					debugLogger.Printf("ChainAgent %s: Failed to send to %s (channel full)", a.ID, targetID)
+					debugLogger.Printf("ChainAgent %s: DROP to %s — channel full (cap=10)", a.ID, targetID)
 				}
 			}
 			
@@ -744,17 +737,51 @@ func (a *ChainAgent) Run() {
 
 // processMessage processes a message using Claude AI with tools
 func (a *ChainAgent) processMessage(msg AgentMessage) AgentMessage {
+	// Build system prompt, adding structured output instructions when this agent
+	// has downstream connections to route output to.
+	systemPrompt := a.Node.SystemPrompt
+	if len(a.OutChans) > 0 {
+		targets := make([]string, 0, len(a.OutChans))
+		for id := range a.OutChans {
+			targets = append(targets, id)
+		}
+		systemPrompt += fmt.Sprintf(`
+
+You are part of an agent chain. After completing your work, you MUST end your response with a <to_next_agent> block containing a focused prompt for the next agent(s) (%s). This tells them exactly what you need.
+
+Format:
+[Your full work, reasoning, code, analysis, etc.]
+
+<to_next_agent>
+[A clear, specific prompt for the next agent — what you need them to do, with only the relevant context they require]
+</to_next_agent>`, strings.Join(targets, ", "))
+	}
+
+	history := a.getConversationHistory()
+
+	// Debug: log the role sequence we are about to send so API errors are easy
+	// to diagnose.
+	if len(history) == 0 {
+		debugLogger.Printf("ChainAgent %s: history empty (first-turn call), prompt role=user", a.ID)
+	} else {
+		roles := make([]string, len(history))
+		for i, h := range history {
+			roles[i] = h.Role
+		}
+		debugLogger.Printf("ChainAgent %s: history roles=%v len=%d, adding prompt role=user", a.ID, roles, len(history))
+	}
+
 	// Build AI context with working directory
 	aiContext := ai.AIContext{
-		SystemPrompt: a.Node.SystemPrompt,
-		ConversationHistory: a.getConversationHistory(),
-		Temperature: 0.7,
-		MaxTokens: 1024,
+		SystemPrompt:        systemPrompt,
+		ConversationHistory: history,
+		Temperature:         0.7,
+		MaxTokens:           1024,
 		CodeContext: &ai.CodeContext{
 			Directory: a.workingDir,
 		},
 	}
-	
+
 	// Get Claude provider
 	provider, err := a.aiManager.GetProvider("claude")
 	if err != nil || provider == nil {
@@ -768,9 +795,11 @@ func (a *ChainAgent) processMessage(msg AgentMessage) AgentMessage {
 	}
 	
 	// Send message to Claude
+	debugLogger.Printf("ChainAgent %s: calling API | history_len=%d prompt_preview=%q",
+		a.ID, len(history), msg.Content[:min(80, len(msg.Content))])
 	response, err := provider.SendMessage(context.Background(), msg.Content, aiContext)
 	if err != nil {
-		debugLogger.Printf("ChainAgent %s: AI error: %v", a.ID, err)
+		debugLogger.Printf("ChainAgent %s: API ERROR history_len=%d: %v", a.ID, len(history), err)
 		return AgentMessage{
 			Role:      "assistant",
 			Content:   fmt.Sprintf("Error: %v", err),
@@ -778,20 +807,16 @@ func (a *ChainAgent) processMessage(msg AgentMessage) AgentMessage {
 			Source:    a.ID,
 		}
 	}
+	debugLogger.Printf("ChainAgent %s: API success | response_len=%d", a.ID, len(response.Content))
 	
-	// Add both input and response to pane
+	// Add response to pane (incoming message was already appended in Run before the API call)
 	if a.Pane != nil {
-		// Add user message
-		a.Pane.Messages = append(a.Pane.Messages, msg)
-		
-		// Add assistant response  
-		responseMsg := AgentMessage{
+		a.Pane.Messages = append(a.Pane.Messages, AgentMessage{
 			Role:      "assistant",
 			Content:   response.Content,
 			Timestamp: msg.Timestamp,
 			Source:    a.ID,
-		}
-		a.Pane.Messages = append(a.Pane.Messages, responseMsg)
+		})
 	}
 	
 	return AgentMessage{
@@ -802,22 +827,48 @@ func (a *ChainAgent) processMessage(msg AgentMessage) AgentMessage {
 	}
 }
 
-// getConversationHistory gets conversation history for AI context
+// getConversationHistory gets conversation history for AI context.
+//
+// Two invariants are enforced here so the Anthropic API never rejects the request:
+//
+//  1. The most-recent message in the pane is the *current* incoming prompt, which
+//     is already passed separately to provider.SendMessage as the `prompt`
+//     argument.  Including it in the history too would (a) duplicate it in the
+//     conversation and (b) cause the history to start with an "assistant" role
+//     when the message came from another agent — which the API rejects.
+//
+//  2. Messages received FROM other agents have role="assistant" in the pane (for
+//     display purposes), but from this agent's perspective they are *input* — the
+//     equivalent of a user turn.  We re-map them to "user" here so that the
+//     history always alternates user / assistant as the API requires.
 func (a *ChainAgent) getConversationHistory() []ai.Message {
 	if a.Pane == nil {
 		return []ai.Message{}
 	}
-	
+
+	// Exclude the last entry — it is the message currently being processed.
+	msgs := a.Pane.Messages
+	if len(msgs) == 0 {
+		return []ai.Message{}
+	}
+	msgs = msgs[:len(msgs)-1]
+
 	var history []ai.Message
-	for _, msg := range a.Pane.Messages {
+	for _, msg := range msgs {
 		// Parse timestamp, use current time as fallback
 		timestamp, err := time.Parse("15:04:05", msg.Timestamp)
 		if err != nil {
 			timestamp = time.Now()
 		}
-		
+
+		// Re-map inter-agent messages to "user" role for the API.
+		apiRole := msg.Role
+		if msg.Role == "assistant" && msg.Source != a.ID {
+			apiRole = "user"
+		}
+
 		history = append(history, ai.Message{
-			Role:      msg.Role,
+			Role:      apiRole,
 			Content:   msg.Content,
 			Timestamp: timestamp,
 		})
@@ -830,6 +881,24 @@ func (m *ChainExecutionModel) scheduleRefresh() tea.Cmd {
 	return tea.Tick(time.Millisecond*500, func(t time.Time) tea.Msg {
 		return RefreshUIMsg{}
 	})
+}
+
+// extractForwardContent returns the content of the <to_next_agent> block if
+// present, or the full content as a fallback when the agent didn't use the
+// structured output format.
+func extractForwardContent(content string) string {
+	const openTag = "<to_next_agent>"
+	const closeTag = "</to_next_agent>"
+
+	start := strings.Index(content, openTag)
+	if start == -1 {
+		return content
+	}
+	end := strings.Index(content, closeTag)
+	if end == -1 {
+		return content
+	}
+	return strings.TrimSpace(content[start+len(openTag) : end])
 }
 
 // Helper function for min

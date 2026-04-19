@@ -141,59 +141,33 @@ func (p *DSLParser) extractNodeIDs(dsl string) []string {
 
 // parseConnections extracts connections from DSL string
 func (p *DSLParser) parseConnections(dsl string) ([]Connection, error) {
+	// Tokenize into node IDs and operators. Using non-overlapping regex on pairs
+	// fails for chains like "A <> B <> C" because "B" is consumed by the first
+	// match and unavailable for the second. Tokenizing first solves this.
+	tokenRe := regexp.MustCompile(`([A-Za-z0-9*]+|<>|->|<-)`)
+	tokens := tokenRe.FindAllString(dsl, -1)
+
+	// Walk token triples: node op node op node ...
+	// tokens[0]=node, tokens[1]=op, tokens[2]=node, tokens[3]=op, tokens[4]=node ...
 	var connections []Connection
-	
-	// Pattern matching for different connection types
-	
-	// Two-way connections: A <> B
-	twoWayRe := regexp.MustCompile(`([A-Za-z0-9*]+)\s*<>\s*([A-Za-z0-9*]+)`)
-	twoWayMatches := twoWayRe.FindAllStringSubmatch(dsl, -1)
-	for _, match := range twoWayMatches {
-		connections = append(connections, Connection{
-			From: match[1],
-			To:   match[2],
-			Type: ConnTwoWay,
-		})
-	}
+	for i := 1; i+1 < len(tokens); i += 2 {
+		op   := tokens[i]
+		from := tokens[i-1]
+		to   := tokens[i+1]
 
-	// One-way connections: A -> B
-	oneWayRe := regexp.MustCompile(`([A-Za-z0-9*]+)\s*->\s*([A-Za-z0-9*]+)`)
-	oneWayMatches := oneWayRe.FindAllStringSubmatch(dsl, -1)
-	for _, match := range oneWayMatches {
-		// Skip if already covered by two-way
-		if !p.containsTwoWay(connections, match[1], match[2]) {
-			connections = append(connections, Connection{
-				From: match[1],
-				To:   match[2],
-				Type: ConnOneWay,
-			})
+		switch op {
+		case "<>":
+			connections = append(connections, Connection{From: from, To: to, Type: ConnTwoWay})
+		case "->":
+			connections = append(connections, Connection{From: from, To: to, Type: ConnOneWay})
+		case "<-":
+			connections = append(connections, Connection{From: to, To: from, Type: ConnOneWay})
+		default:
+			return nil, fmt.Errorf("unknown operator %q between %q and %q", op, from, to)
 		}
-	}
-
-	// Reverse one-way connections: A <- B  
-	reverseRe := regexp.MustCompile(`([A-Za-z0-9*]+)\s*<-\s*([A-Za-z0-9*]+)`)
-	reverseMatches := reverseRe.FindAllStringSubmatch(dsl, -1)
-	for _, match := range reverseMatches {
-		connections = append(connections, Connection{
-			From: match[2], // Reversed: B -> A
-			To:   match[1],
-			Type: ConnOneWay,
-		})
 	}
 
 	return connections, nil
-}
-
-// containsTwoWay checks if a two-way connection already exists between nodes
-func (p *DSLParser) containsTwoWay(connections []Connection, from, to string) bool {
-	for _, conn := range connections {
-		if conn.Type == ConnTwoWay {
-			if (conn.From == from && conn.To == to) || (conn.From == to && conn.To == from) {
-				return true
-			}
-		}
-	}
-	return false
 }
 
 // generateNodeName creates a human-readable name for a node
