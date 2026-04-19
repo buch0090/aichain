@@ -148,7 +148,7 @@ func (c *ClaudeProvider) SendMessage(ctx context.Context, prompt string, aiConte
 	// Tool calling loop - handle multiple rounds of tool use
 	allMessages := messages
 	var finalContent strings.Builder
-	maxToolRounds := 10  // Increased from 5 to 10
+	maxToolRounds := 25  // Increased from 10 to 25
 	toolRounds := 0
 	
 	// Track repeated tool failures to break infinite loops

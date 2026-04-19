@@ -776,7 +776,7 @@ Format:
 		SystemPrompt:        systemPrompt,
 		ConversationHistory: history,
 		Temperature:         0.7,
-		MaxTokens:           1024,
+		MaxTokens:           4096,
 		CodeContext: &ai.CodeContext{
 			Directory: a.workingDir,
 		},
