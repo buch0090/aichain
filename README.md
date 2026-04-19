@@ -1,49 +1,64 @@
 # AIChain
 
-A revolutionary VIM-like terminal application for AI agent chaining, featuring **multiple AI agents that
--can communicate with each other** in real-time.
+A terminal application for AI agent chaining — define a topology of Claude AI agents using a simple DSL, assign each a role, and watch them collaborate in real time.
 
 ```
-    ┌─────┐      ┌─────┐      ┌─────┐      ┌─────┐
-    │ AI  │──────│ AI  │──────│ AI  │──────│ AI  │
-    │ 🤖  │ ⟸──⟹ │ 🧠  │ ⟸──⟹ │ ⚡  │ ⟸──⟹ │ 🎯  │
-    └─────┘      └─────┘      └─────┘      └─────┘
-        │            │            │            │
-        └────────────┼────────────┼────────────┘
-                     │            │
-               ┌─────▼────────────▼─────┐
-               │      AIChain 🚀       │
-               │   VIM + AI Agents     │
-               └───────────────────────┘
+    ┌─────┐      ┌─────┐      ┌─────┐
+    │ AI  │─────▶│ AI  │─────▶│ AI  │
+    │ 🤖  │      │ 🧠  │      │ ⚡  │
+    └─────┘      └─────┘      └─────┘
+        │            │            │
+        └────────────┼────────────┘
+                     │
+               ┌─────▼─────┐
+               │  AIChain  │
+               │   🚀 TUI  │
+               └───────────┘
 ```
 
-## DSL Overview
+## Quick Start
 
-AIChain uses a topology DSL to define how agents communicate. You enter this in the interactive setup screen.
+```bash
+# 1. Set your API key
+export CLAUDE_API_KEY=your-api-key
 
-### Topology Syntax
+# 2. Build
+make build
 
-| Operator | Meaning |
-|----------|---------|
-| `A -> B` | A sends output to B (one-way) |
-| `A <- B` | A receives from B (one-way, reversed) |
-| `A <> B` | A and B communicate bidirectionally |
-| `*`      | Human node — a pane where you interact directly |
+# 3. Run interactive setup
+./bin/aichain --setup
 
-These compose into chains:
-
-```
-A -> B -> C          # linear pipeline
-A <> B <> C          # all neighbors communicate bidirectionally
-A -> * <- B          # human receives from both A and B
-A <> *               # human and A communicate bidirectionally
+# Or run a DSL file directly
+./bin/aichain my-chain.dsl
 ```
 
-Node identifiers can be any letters or numbers (`A`, `B`, `dev`, `review`, etc.).
+## Usage
 
-## Interactive Setup
+```
+aichain [dsl-file]              Execute a DSL file directly
+aichain --setup                 Interactive chain builder (2-step wizard)
+aichain --setup --debug         Debug mode (no alt screen, logs to claudevim-debug.log)
+aichain --server [--port 8747]  Start the HTTP backend server
+aichain --version               Show version
+```
 
-Run the setup screen:
+### Running a DSL file
+
+Create a file like `my-chain.dsl` containing just the topology:
+
+```
+A -> B -> C
+```
+
+Then run:
+
+```bash
+./bin/aichain my-chain.dsl
+```
+
+> **Note:** When running a DSL file directly, agent assignment uses defaults from the `.agents/` directory. For full control, use `--setup` to interactively assign agents to each node.
+
+### Interactive setup
 
 ```bash
 ./bin/aichain --setup
@@ -54,11 +69,32 @@ Run the setup screen:
 A -> B -> C
 ```
 
-**Step 2 — Assign an agent to each node.** For each node (`A`, `B`, `C`), you select from the pre-configured agents in your `.agents/` directory.
+**Step 2 — Assign an agent to each node.** For each AI node, select from the pre-configured agents in your `.agents/` directory using `j`/`k` to navigate and `Enter` to confirm.
+
+**Step 3 — Press Enter to start execution.** Each agent gets its own pane. Type a message at the bottom and press Enter to send it into the chain.
+
+## DSL Syntax
+
+| Operator | Meaning |
+|----------|---------|
+| `A -> B` | A sends output to B (one-way) |
+| `A <- B` | B sends output to A (reverse one-way) |
+| `A <> B` | A and B communicate bidirectionally |
+| `*`      | Human interaction point (⚠️ not yet functional in execution — see Known Issues) |
+
+These compose into chains:
+
+```
+A -> B -> C          # linear pipeline
+A <> B <> C          # neighbors communicate bidirectionally
+A -> B <- C          # B receives from both A and C
+```
+
+Node identifiers can be any letters or numbers (`A`, `B`, `C`, `1`, `2`, etc.).
 
 ## Agent Definitions
 
-Agents are YAML files stored in `.agents/`:
+Agents are YAML files in `.agents/`. On first run, AIChain auto-creates defaults: `developer`, `architect`, `reviewer`, `debugger`, `security`, `tester`.
 
 ```yaml
 # .agents/developer.yaml
@@ -76,100 +112,114 @@ tags:
   - development
 ```
 
-On first run, AIChain creates default agents in `.agents/`: `developer`, `architect`, `reviewer`, `debugger`, `security`, `tester`. You can edit these or add your own.
+Edit these or add your own `.yaml` files to customize agent behavior.
 
-## Example Topologies
+## Example Use Cases
 
-### Linear code review pipeline
-```
-A -> B -> C
-```
-Assign: A = developer, B = reviewer, C = tester. Developer writes, reviewer critiques, tester validates.
+### Code review pipeline: `A -> B -> C`
+- **A** = developer (writes code)
+- **B** = reviewer (critiques for bugs, style, security)
+- **C** = tester (validates with test cases)
 
-### Bidirectional collaboration
-```
-A <> B <> C
-```
-Assign: A = architect, B = developer, C = security. All three can exchange messages with their neighbors.
+### Architecture review: `A <> B <> C`
+- **A** = architect (designs systems)
+- **B** = developer (implements)
+- **C** = security (audits)
 
-### Fan-in to human
-```
-A -> * <- B
-```
-Both agents send output to a human pane for review and decision.
-
-### Human in the loop
-```
-A -> B -> *
-```
-Output flows through two agents before reaching you.
+All three exchange messages bidirectionally with their neighbors.
 
 ## How It Works
 
-Each agent in the `flow` runs in its own goroutine and communicates via Go channels. The DSL topology determines which channels are wired together:
+Each AI agent runs in its own goroutine. The DSL topology determines which Go channels are wired together:
 
-- `A -> B`: A's output channel connects to B's input channel
-- `A <> B`: channels are connected in both directions
-- `*`: a human-controlled pane that sends/receives from connected agents
+- `A -> B`: A's output channel → B's input channel
+- `A <> B`: channels wired in both directions
 
-Agents can use tools (file read/write, shell commands) during their turns.
+When an agent responds, it includes a `<to_next_agent>` block with focused instructions for the next agent. Only this block is forwarded downstream (the full response stays in the agent's own pane).
 
-## Setup
-
-```bash
-export CLAUDE_API_KEY=your-api-key
-
-make -f Makefile-standalone build
-./bin/aichain --setup
-```
-
-## Tools Available to Agents
+Agents have access to tools during their turn:
 
 | Tool | Description |
 |------|-------------|
 | `read_file(path)` | Read file contents |
-| `write_file(path, content)` | Write to a file |
+| `write_file(path, content)` | Write/create a file |
 | `list_files(dir)` | List directory contents |
-| `run_command(cmd)` | Execute a shell command |
 
-Tool calls are limited to 5 rounds per agent turn to prevent infinite loops.
+Tool calls are limited to 10 rounds per agent turn to prevent infinite loops. All file operations are sandboxed to the working directory.
+
+## Chain Execution Keybindings
+
+| Key | Action |
+|-----|--------|
+| Type + `Enter` | Send message to the chain (when input is focused) |
+| `Tab` | Cycle focus: input → agent panes → input |
+| `←` `→` / `h` `l` | Navigate between agent panes |
+| `↑` `↓` / `j` `k` | Scroll within focused agent pane |
+| `PgUp` `PgDn` | Page scroll in agent pane |
+| `Enter` (in pane mode) | Return focus to message input |
+| `Ctrl+C` / `Esc` | Quit |
+
+## Environment Variables
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `CLAUDE_API_KEY` | Yes | Anthropic API key |
+| `AICHAIN_ALLOWED_DIR` | No | Directory agents can access (defaults to CWD) |
+
+## Build & Test
+
+```bash
+make build          # Build binary to ./bin/aichain
+make test           # Run all tests
+make install        # Copy to /usr/local/bin
+make clean          # Remove build artifacts
+make fmt            # Format code
+```
+
+## Debug Mode
+
+```bash
+./bin/aichain --setup --debug
+```
+
+Debug mode disables the alternate screen buffer (so you can see normal terminal output) and writes detailed logs:
+
+- `claudevim-debug.log` — TUI and chain execution debug logs
+- `claude-sdk-debug.log` — Claude API request/response logs (tool calls, content blocks)
 
 ## Project Structure
 
 ```
+cmd/aichain/main.go              # CLI entry point
 internal/
+├── app/app.go                   # Application orchestrator
 ├── chain/
-│   ├── dsl.go        # DSL parser — connection types, node extraction
-│   ├── agents.go     # ChainAgent struct, goroutine execution
-│   └── setup.go      # Chain initialization
+│   ├── dsl.go                   # DSL parser (tokenizer-based)
+│   ├── agents.go                # YAML agent loader (.agents/ directory)
+│   └── setup.go                 # 2-step setup flow
 ├── tui/
-│   ├── model.go      # Top-level Bubble Tea model
-│   ├── chain_setup.go         # Chain configuration UI
-│   └── chain_execution.go     # Running chain with agent panes
+│   ├── model.go                 # Top-level Bubble Tea model
+│   ├── chain_setup.go           # Setup wizard UI (DSL input + agent selection)
+│   ├── chain_execution.go       # Execution UI (agent panes, channels, goroutines)
+│   ├── chain_execution_helpers.go
+│   ├── panes.go                 # Explorer, Editor, Chat pane components
+│   └── messages.go              # Bubble Tea message types
 ├── ai/
-│   └── claude.go     # Claude API integration
-└── tools/
-    └── tools.go      # Tool implementations
+│   ├── provider.go              # AI provider interface
+│   └── claude.go                # Claude SDK integration with tool calling
+├── tools/tools.go               # Tool interface (read/write/list files)
+├── session/session.go           # Session management
+├── pipeline/pipeline.go         # Pipeline message routing
+└── vim/keybindings.go           # VIM mode engine
 ```
 
-## Keybindings
+## Known Issues
 
-| Key | Action |
-|-----|--------|
-| `j` / `k` | Navigate up/down in focused pane |
-| `Tab` | Switch focus between agent panes |
-| `i` | Enter insert mode (type to agent) |
-| `Esc` | Return to normal mode |
-| `Enter` | Send message to focused agent |
-| `:q` | Quit |
+- **Human node (`*`) is not functional in chain execution.** The `*` node is parsed correctly in the DSL and skipped during agent assignment, but no channel wiring or UI exists for it during execution. Chains containing `*` will break at that point. See `CODE_WALKTHROUGH.md` for details.
+- **Agent model selection is ignored** — all agents use the same Claude model regardless of YAML config.
+- **No persistence** — sessions and message history exist only in memory.
 
-## Build
-
-```bash
-make -f Makefile-standalone build      # build binary to ./bin/aichain
-make -f Makefile-standalone test       # run tests
-make -f Makefile-standalone dev        # build and run
-```
+See `CODE_WALKTHROUGH.md` for a complete bug inventory with code references.
 
 ## License
 
