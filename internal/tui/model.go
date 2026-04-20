@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"log"
+	"os"
 	"strings"
 	"time"
 
@@ -13,6 +14,7 @@ import (
 	"github.com/aichain/aichain/internal/vim"
 
 	"github.com/charmbracelet/bubbles/textinput"
+	"golang.org/x/term"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
@@ -167,7 +169,21 @@ func NewModelWithDSLFile(application *app.Application, dslFile string) Model {
 
 // Init initializes the model
 func (m Model) Init() tea.Cmd {
-	return textinput.Blink
+	return tea.Batch(
+		textinput.Blink,
+		func() tea.Msg { return tea.ClearScreen() },
+		getInitialWindowSize,
+	)
+}
+
+// getInitialWindowSize queries the terminal size so the UI renders immediately
+// without waiting for a manual resize.
+func getInitialWindowSize() tea.Msg {
+	w, h, err := term.GetSize(int(os.Stdout.Fd()))
+	if err != nil {
+		return nil
+	}
+	return tea.WindowSizeMsg{Width: w, Height: h}
 }
 
 // Update handles messages and updates the model
